@@ -1,5 +1,6 @@
 /* ── リセット & 変数 ──────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+.hidden { display: none !important; }
 
 :root {
   --header-h: 52px;
