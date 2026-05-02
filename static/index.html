@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🚻 トイレマップ 東京</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ヘッダー -->
+  <header id="header">
+    <div id="header-left">
+      <span class="header-icon">🚻</span>
+      <h1>トイレマップ 東京</h1>
+    </div>
+    <div id="header-right">
+      <span id="toilet-count">読み込み中…</span>
+      <span id="legend">
+        <span class="dot" style="background:#4CAF50"></span>きれい
+        <span class="dot" style="background:#FFC107"></span>普通
+        <span class="dot" style="background:#F44336"></span>汚い
+        <span class="dot" style="background:#9E9E9E"></span>未評価
+      </span>
+    </div>
+  </header>
+
+  <!-- 地図 -->
+  <div id="map"></div>
+
+  <!-- 詳細パネル（下からスライドアップ） -->
+  <div id="panel" class="panel hidden">
+    <div id="panel-handle"></div>
+    <button id="panel-close" aria-label="閉じる">✕</button>
+
+    <div id="panel-body">
+      <h2 id="panel-name"></h2>
+      <p id="panel-operator" class="sub-text"></p>
+
+      <div id="panel-scores">
+        <div class="score-card">
+          <div class="score-label">清潔さ</div>
+          <div id="panel-stars" class="stars"></div>
+          <div id="panel-clean-val" class="score-val"></div>
+        </div>
+        <div class="score-card">
+          <div class="score-label">混雑</div>
+          <div id="panel-crowd-icon" class="crowd-icon"></div>
+          <div id="panel-crowd-val" class="score-val"></div>
+        </div>
+        <div class="score-card">
+          <div class="score-label">投稿数</div>
+          <div id="panel-count" class="score-big"></div>
+        </div>
+        <div class="score-card" id="panel-wc-card">
+          <div class="score-label">設備</div>
+          <div id="panel-wc" class="score-big">♿</div>
+        </div>
+      </div>
+
+      <!-- 最近の投稿 -->
+      <div id="panel-comments">
+        <h3>最近の投稿</h3>
+        <ul id="comment-list"></ul>
+        <p id="no-comments" class="no-comments hidden">まだ投稿がありません</p>
+      </div>
+
+      <!-- 投稿ボタン -->
+      <button id="open-form-btn" class="btn-primary">＋ 評価を投稿する</button>
+    </div>
+  </div>
+
+  <!-- 評価モーダル -->
+  <div id="modal-backdrop" class="hidden"></div>
+  <div id="modal" class="hidden">
+    <div class="modal-header">
+      <h2>評価を投稿</h2>
+      <button id="modal-close" aria-label="閉じる">✕</button>
+    </div>
+    <div id="modal-name"></div>
+
+    <form id="rating-form" novalidate>
+      <!-- 清潔さ -->
+      <div class="form-group">
+        <label>清潔さ <span class="required">*</span></label>
+        <div id="star-input" class="star-input" role="group" aria-label="清潔さを選択">
+          <span class="star" data-v="1">★</span>
+          <span class="star" data-v="2">★</span>
+          <span class="star" data-v="3">★</span>
+          <span class="star" data-v="4">★</span>
+          <span class="star" data-v="5">★</span>
+        </div>
+        <div id="star-label" class="star-label">タップして評価</div>
+      </div>
+
+      <!-- 混雑具合 -->
+      <div class="form-group">
+        <label>混雑具合 <span class="required">*</span></label>
+        <div class="crowd-btns">
+          <button type="button" class="crowd-btn" data-v="1">😊 空いてる</button>
+          <button type="button" class="crowd-btn" data-v="2">😐 ふつう</button>
+          <button type="button" class="crowd-btn" data-v="3">😰 混んでる</button>
+        </div>
+      </div>
+
+      <!-- コメント -->
+      <div class="form-group">
+        <label>コメント <span class="optional">（任意）</span></label>
+        <textarea id="comment-input" placeholder="気づいたことなど（最大200文字）" maxlength="200" rows="3"></textarea>
+        <div id="char-count" class="char-count">0 / 200</div>
+      </div>
+
+      <div id="form-error" class="form-error hidden"></div>
+
+      <button type="submit" id="submit-btn" class="btn-primary btn-block">投稿する</button>
+    </form>
+
+    <div id="submit-success" class="hidden">
+      <div class="success-icon">✅</div>
+      <p>投稿しました！ありがとうございます。</p>
+      <button id="success-close" class="btn-secondary btn-block">閉じる</button>
+    </div>
+  </div>
+
+  <!-- 追加モードヒント -->
+  <div id="add-hint" class="hidden">追加したい場所をタップしてください　✕でキャンセル</div>
+
+  <!-- FAB -->
+  <button id="add-fab" aria-label="トイレを追加">＋</button>
+
+  <!-- トイレ追加モーダル -->
+  <div id="add-modal-backdrop" class="hidden"></div>
+  <div id="add-modal" class="hidden">
+    <div class="modal-header">
+      <h2>トイレを追加</h2>
+      <button id="add-modal-close" aria-label="閉じる">✕</button>
+    </div>
+    <form id="add-form" novalidate>
+      <div class="form-group">
+        <label>施設種別 <span class="required">*</span></label>
+        <div class="type-btns">
+          <button type="button" class="type-btn active" data-v="公衆">公衆</button>
+          <button type="button" class="type-btn" data-v="商業施設">商業施設</button>
+          <button type="button" class="type-btn" data-v="駅">駅</button>
+          <button type="button" class="type-btn" data-v="コンビニ">コンビニ</button>
+          <button type="button" class="type-btn" data-v="その他">その他</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>名前 <span class="optional">（任意）</span></label>
+        <input type="text" id="add-name" placeholder="例：○○デパート3F" maxlength="50" />
+      </div>
+      <div id="add-error" class="form-error hidden"></div>
+      <button type="submit" id="add-submit-btn" class="btn-primary">追加する</button>
+    </form>
+  </div>
+
+  <!-- ローディング -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <p>データを読み込み中…</p>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

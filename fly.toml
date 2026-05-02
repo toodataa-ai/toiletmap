@@ -1,0 +1,23 @@
+# app の名前は世界で一意である必要があります。適当な名前に変えてください。
+app = "toilet-map-tokyo"
+primary_region = "nrt"
+
+[build]
+
+[env]
+  DB_PATH = "/data/toilets.db"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[[mounts]]
+  source = "toilet_data"
+  destination = "/data"
