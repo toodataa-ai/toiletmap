@@ -293,6 +293,45 @@ document.getElementById('rating-form').addEventListener('submit', async e => {
   }
 });
 
+// ── 現在地 ───────────────────────────────────────────────────────────────────
+let locationMarker = null;
+
+function flyToCurrentLocation() {
+  if (!navigator.geolocation) {
+    alert('このブラウザは位置情報に対応していません');
+    return;
+  }
+  const btn = document.getElementById('locate-fab');
+  btn.classList.add('locating');
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      btn.classList.remove('locating');
+      const { latitude: lat, longitude: lng } = pos.coords;
+      map.setView([lat, lng], 16);
+
+      if (locationMarker) locationMarker.remove();
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+        <circle cx="10" cy="10" r="7" fill="#1976D2" stroke="white" stroke-width="2.5"/>
+        <circle cx="10" cy="10" r="12" fill="#1976D2" fill-opacity="0.18"/>
+      </svg>`;
+      locationMarker = L.marker([lat, lng], {
+        icon: L.divIcon({ html: svg, className: '', iconSize: [20, 20], iconAnchor: [10, 10] }),
+        zIndexOffset: 1000,
+      }).addTo(map);
+    },
+    err => {
+      btn.classList.remove('locating');
+      const msg = {
+        1: '位置情報の使用が拒否されました。ブラウザの設定を確認してください。',
+        2: '位置情報を取得できませんでした。',
+        3: '位置情報の取得がタイムアウトしました。',
+      }[err.code] || '位置情報の取得に失敗しました。';
+      alert(msg);
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+}
+
 // ── トイレ追加機能 ────────────────────────────────────────────────────────────
 function toggleAddMode() {
   addMode = !addMode;
@@ -375,6 +414,7 @@ document.getElementById('open-form-btn').addEventListener('click', openModal);
 document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal-backdrop').addEventListener('click', closeModal);
 document.getElementById('success-close').addEventListener('click', closeModal);
+document.getElementById('locate-fab').addEventListener('click', flyToCurrentLocation);
 document.getElementById('add-fab').addEventListener('click', toggleAddMode);
 document.getElementById('add-modal-close').addEventListener('click', () => {
   closeAddModal();
