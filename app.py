@@ -332,5 +332,25 @@ def stats():
     return {"toilets": t, "ratings": r}
 
 
+@app.get("/api/backup")
+def backup():
+    from fastapi.responses import JSONResponse
+    import json as _json_mod
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM toilets")
+        toilets = _fetchall(cur)
+        cur.execute("SELECT * FROM ratings")
+        ratings = _fetchall(cur)
+    content = _json_mod.dumps(
+        {"toilets": toilets, "ratings": ratings},
+        ensure_ascii=False, default=str, indent=2
+    )
+    return JSONResponse(
+        content=_json_mod.loads(content),
+        headers={"Content-Disposition": "attachment; filename=toiletmap_backup.json"}
+    )
+
+
 # ── 静的ファイル ──────────────────────────────────────────────────────────────
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
