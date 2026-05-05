@@ -11,6 +11,7 @@ import threading
 import subprocess
 import time
 import json as _json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from typing import Optional
 from xml.etree import ElementTree
@@ -46,7 +47,7 @@ KOENTANBO_SITEMAPS = [
 # 関東広域バウンディングボックス
 KANTO_BBOX = (34.5, 138.5, 37.0, 141.5)
 
-_kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
+_kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "skipped": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ def _q(sql: str) -> str:
 @contextmanager
 def get_db():
     if USE_SQLITE:
-        conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False)
+        conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False, timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
         try:
             yield conn
@@ -154,6 +155,15 @@ def init_db():
             """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_parks_latlon ON parks(lat, lon)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_photos_park  ON park_photos(park_id)")
+        # マイグレーション: カラムが未存在なら追加
+        for col_sql in [
+            "ALTER TABLE parks ADD COLUMN last_fetched TIMESTAMP",
+            "ALTER TABLE park_photos ADD COLUMN photo_source TEXT",
+        ]:
+            try:
+                cur.execute(col_sql)
+            except Exception:
+                pass  # すでに存在する場合は無視
 
 
 # ── OSM データ取得 ────────────────────────────────────────────────────────────
@@ -387,13 +397,80 @@ def _parse_koentanbo_page(url: str) -> dict | None:
         return None
 
 
+def _process_koentanbo_url(url: str, is_update: bool = False) -> bool:
+    """1ページをスクレイプしてDBに保存。
+    is_update=True の場合は既存レコードを上書き（ユーザー投稿写真は保持）。
+    新規登録 or 更新できたら True を返す。
+    """
+    data = _parse_koentanbo_page(url)
+    if not data:
+        return False
+    lat, lon = data["lat"], data["lon"]
+    S, W, N, E = KANTO_BBOX
+    if not (S <= lat <= N and W <= lon <= E):
+        return False
+
+    slug   = url.rstrip("/").split("/")[-1]
+    osm_id = f"koentanbo_{slug}"
+    now    = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            if is_update:
+                # 基本情報を更新
+                cur.execute(
+                    _q(f"UPDATE parks SET lat=%s, lon=%s, name=%s, last_fetched={now}"
+                       " WHERE osm_id=%s"),
+                    (lat, lon, data["name"] or "公園", osm_id),
+                )
+                # koentanbo 由来の写真だけ差し替え（ユーザー投稿は残す）
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                row = cur.fetchone()
+                if row:
+                    park_id = row[0]
+                    cur.execute(
+                        _q("DELETE FROM park_photos WHERE park_id=%s AND photo_source='koentanbo'"),
+                        (park_id,),
+                    )
+                    for photo_url in data["photos"][:3]:
+                        cur.execute(
+                            _q("INSERT INTO park_photos (park_id, photo_url, caption, photo_source)"
+                               " VALUES (%s,%s,%s,'koentanbo')"),
+                            (park_id, photo_url, None),
+                        )
+            else:
+                cur.execute(
+                    _q(f"""INSERT INTO parks (osm_id, lat, lon, name, park_type, source, last_fetched)
+                          VALUES (%s,%s,%s,%s,'park','koentanbo',{now})
+                          ON CONFLICT (osm_id) DO NOTHING"""),
+                    (osm_id, lat, lon, data["name"] or "公園"),
+                )
+                if cur.rowcount:
+                    cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                    row = cur.fetchone()
+                    if row:
+                        park_id = row[0]
+                        for photo_url in data["photos"][:3]:
+                            cur.execute(
+                                _q("INSERT INTO park_photos (park_id, photo_url, caption, photo_source)"
+                                   " VALUES (%s,%s,%s,'koentanbo')"),
+                                (park_id, photo_url, None),
+                            )
+                    return True
+                return False
+    except Exception as exc:
+        print(f"[koentanbo] db error {url}: {exc}")
+        return False
+    return is_update  # UPDATE の場合は常に True
+
+
 def fetch_koentanbo_parks():
     global _kb_status
-    _kb_status = {"running": True, "total": 0, "done": 0, "inserted": 0}
+    _kb_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "skipped": 0}
     headers = {"User-Agent": KOENTANBO_UA}
 
-    # サイトマップから全公園 URL を収集
-    urls: list[str] = []
+    # サイトマップから (url, lastmod) を収集
+    url_lastmod: dict[str, str] = {}
     for sm_url in KOENTANBO_SITEMAPS:
         try:
             r = _requests.get(sm_url, timeout=15, headers=headers)
@@ -401,65 +478,64 @@ def fetch_koentanbo_parks():
                 continue
             root = ElementTree.fromstring(r.content)
             ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-            for loc in root.findall(".//sm:loc", ns):
-                u = (loc.text or "").strip()
-                if (u.startswith(KOENTANBO_BASE + "/")
-                        and u != KOENTANBO_BASE + "/"
-                        and not re.search(r"/(list|ranking|about|tag|category|page)/", u)):
-                    slug = u.rstrip("/").split("/")[-1]
+            for url_el in root.findall("sm:url", ns):
+                loc = url_el.findtext("sm:loc", namespaces=ns) or ""
+                loc = loc.strip()
+                if (loc.startswith(KOENTANBO_BASE + "/")
+                        and loc != KOENTANBO_BASE + "/"
+                        and not re.search(r"/(list|ranking|about|tag|category|page)/", loc)):
+                    slug = loc.rstrip("/").split("/")[-1]
                     if slug and len(slug) > 2:
-                        urls.append(u)
+                        lastmod = (url_el.findtext("sm:lastmod", namespaces=ns) or "").strip()
+                        url_lastmod[loc] = lastmod
         except Exception as exc:
             print(f"[koentanbo] sitemap error {sm_url}: {exc}")
 
-    urls = list(dict.fromkeys(urls))  # 重複除去
-    _kb_status["total"] = len(urls)
-    print(f"[koentanbo] {len(urls)} 件の URL を取得")
+    print(f"[koentanbo] サイトマップから {len(url_lastmod)} 件取得")
 
-    S, W, N, E = KANTO_BBOX
-    for url in urls:
-        time.sleep(0.4)
-        data = _parse_koentanbo_page(url)
-        _kb_status["done"] += 1
+    # DB の既存レコード (osm_id, last_fetched) を一括取得
+    db_fetched: dict[str, str] = {}
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT osm_id, last_fetched FROM parks WHERE osm_id LIKE 'koentanbo_%'")
+            for row in cur.fetchall():
+                db_fetched[row[0]] = str(row[1] or "")
+    except Exception as exc:
+        print(f"[koentanbo] existing check error: {exc}")
 
-        if not data:
-            continue
-        lat, lon = data["lat"], data["lon"]
-        if not (S <= lat <= N and W <= lon <= E):
-            continue
+    # 処理対象を分類：新規 / 更新あり / スキップ
+    new_urls:    list[str] = []
+    update_urls: list[str] = []
+    for url, lastmod in url_lastmod.items():
+        osm_id = f"koentanbo_{url.rstrip('/').split('/')[-1]}"
+        if osm_id not in db_fetched:
+            new_urls.append(url)
+        elif lastmod and db_fetched[osm_id] and lastmod > db_fetched[osm_id][:10]:
+            # サイトマップの lastmod がDB保存日より新しい
+            update_urls.append(url)
 
-        slug    = url.rstrip("/").split("/")[-1]
-        osm_id  = f"koentanbo_{slug}"
-        try:
-            with get_db() as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    _q("""INSERT INTO parks (osm_id, lat, lon, name, park_type, source)
-                          VALUES (%s,%s,%s,%s,'park','koentanbo')
-                          ON CONFLICT (osm_id) DO NOTHING"""),
-                    (osm_id, lat, lon, data["name"] or "公園"),
-                )
-                if cur.rowcount:
-                    _kb_status["inserted"] += 1
-                    cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                    row = cur.fetchone()
-                    if row:
-                        park_id = row[0]
-                        for photo_url in data["photos"][:3]:
-                            cur.execute(
-                                _q("INSERT INTO park_photos (park_id, photo_url, caption)"
-                                   " VALUES (%s,%s,%s)"),
-                                (park_id, photo_url, None),
-                            )
-        except Exception as exc:
-            print(f"[koentanbo] db error {url}: {exc}")
+    skipped = len(url_lastmod) - len(new_urls) - len(update_urls)
+    _kb_status["skipped"] = skipped
+    _kb_status["total"]   = len(new_urls) + len(update_urls)
+    print(f"[koentanbo] 新規:{len(new_urls)} 更新:{len(update_urls)} スキップ:{skipped} — 8並列で処理開始")
 
-        if _kb_status["done"] % 100 == 0:
-            print(f"[koentanbo] {_kb_status['done']}/{len(urls)} 件処理 "
-                  f"({_kb_status['inserted']} 件登録)")
+    def run(url: str, is_update: bool) -> bool:
+        return _process_koentanbo_url(url, is_update=is_update)
+
+    tasks = [(u, False) for u in new_urls] + [(u, True) for u in update_urls]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(run, u, upd): u for u, upd in tasks}
+        for fut in as_completed(futures):
+            _kb_status["done"] += 1
+            if fut.result():
+                _kb_status["inserted"] += 1
+            if _kb_status["done"] % 200 == 0:
+                print(f"[koentanbo] {_kb_status['done']}/{_kb_status['total']} 件処理 "
+                      f"({_kb_status['inserted']} 件登録/更新)")
 
     _kb_status["running"] = False
-    print(f"[koentanbo] 完了: {_kb_status['inserted']} 件登録")
+    print(f"[koentanbo] 完了: {_kb_status['inserted']} 件登録/更新")
 
 
 @app.post("/api/sync/koentanbo")

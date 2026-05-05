@@ -495,9 +495,12 @@ async function startKoentanboSync() {
     try {
       const s = await fetch('/api/sync/koentanbo/status').then(r => r.json());
       const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
+      const skipMsg = s.skipped > 0 ? ` スキップ:${s.skipped.toLocaleString()}` : '';
       document.getElementById('park-count').textContent =
-        `取得中… ${s.done.toLocaleString()}/${s.total.toLocaleString()} (${pct}%) 登録:${s.inserted}件`;
-      if (!s.running && s.done > 0) {
+        s.total === 0 && s.skipped > 0
+          ? `✅ 全件登録済み・更新なし (${s.skipped.toLocaleString()}件)`
+          : `取得中… ${s.done.toLocaleString()}/${s.total.toLocaleString()} (${pct}%) 登録/更新:${s.inserted}件${skipMsg}`;
+      if (!s.running) {
         clearInterval(kbPollTimer);
         btn.disabled = false;
         btn.textContent = '🌐';
