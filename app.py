@@ -1,6 +1,6 @@
 """
-トイレマップ バックエンド (FastAPI + PostgreSQL / SQLite fallback)
-DATABASE_URL 未設定時は toilets.db (SQLite) を使用
+公園マップ バックエンド (FastAPI + PostgreSQL / SQLite fallback)
+DATABASE_URL 未設定時は parks.db (SQLite) を使用
 起動: uvicorn app:app --reload --port 8502
 """
 
@@ -16,12 +16,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="トイレマップ API")
+app = FastAPI(title="公園マップ API")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 USE_SQLITE   = DATABASE_URL is None
 SQLITE_PATH  = os.environ.get("DB_PATH",
-               os.path.join(os.path.dirname(os.path.abspath(__file__)), "toilets.db"))
+               os.path.join(os.path.dirname(os.path.abspath(__file__)), "parks.db"))
 
 if not USE_SQLITE:
     import psycopg2
@@ -34,7 +34,6 @@ TOKYO_BBOX   = (35.50, 139.40, 35.90, 139.95)
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
 
 def _q(sql: str) -> str:
-    """SQLite 用にプレースホルダー(%s→?)と型キャスト(::numeric)を変換"""
     if USE_SQLITE:
         return sql.replace('%s', '?').replace('::numeric', '')
     return sql
@@ -81,76 +80,81 @@ def init_db():
         cur = conn.cursor()
         if USE_SQLITE:
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS toilets (
-                    id            INTEGER PRIMARY KEY,
-                    osm_id        TEXT UNIQUE,
-                    lat           REAL NOT NULL,
-                    lon           REAL NOT NULL,
-                    name          TEXT,
-                    operator      TEXT,
-                    wheelchair    INTEGER DEFAULT 0,
-                    source        TEXT DEFAULT 'osm',
-                    facility_type TEXT
+                CREATE TABLE IF NOT EXISTS parks (
+                    id         INTEGER PRIMARY KEY,
+                    osm_id     TEXT UNIQUE,
+                    lat        REAL NOT NULL,
+                    lon        REAL NOT NULL,
+                    name       TEXT,
+                    operator   TEXT,
+                    park_type  TEXT DEFAULT 'playground',
+                    source     TEXT DEFAULT 'osm'
                 )
             """)
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS ratings (
-                    id          INTEGER PRIMARY KEY,
-                    toilet_id   INTEGER NOT NULL REFERENCES toilets(id),
-                    cleanliness INTEGER NOT NULL CHECK(cleanliness BETWEEN 1 AND 5),
-                    crowdedness INTEGER NOT NULL CHECK(crowdedness IN (1, 2, 3)),
-                    comment     TEXT,
-                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS park_photos (
+                    id         INTEGER PRIMARY KEY,
+                    park_id    INTEGER NOT NULL REFERENCES parks(id),
+                    photo_url  TEXT NOT NULL,
+                    caption    TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # 既存 DB に facility_type がない場合のマイグレーション
-            try:
-                cur.execute("ALTER TABLE toilets ADD COLUMN facility_type TEXT")
-            except Exception:
-                pass
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS page_views (
+                    id         INTEGER PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         else:
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS toilets (
-                    id            SERIAL PRIMARY KEY,
-                    osm_id        TEXT UNIQUE,
-                    lat           REAL NOT NULL,
-                    lon           REAL NOT NULL,
-                    name          TEXT,
-                    operator      TEXT,
-                    wheelchair    INTEGER DEFAULT 0,
-                    source        TEXT DEFAULT 'osm',
-                    facility_type TEXT
+                CREATE TABLE IF NOT EXISTS parks (
+                    id         SERIAL PRIMARY KEY,
+                    osm_id     TEXT UNIQUE,
+                    lat        REAL NOT NULL,
+                    lon        REAL NOT NULL,
+                    name       TEXT,
+                    operator   TEXT,
+                    park_type  TEXT DEFAULT 'playground',
+                    source     TEXT DEFAULT 'osm'
                 )
             """)
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS ratings (
-                    id          SERIAL PRIMARY KEY,
-                    toilet_id   INTEGER NOT NULL REFERENCES toilets(id),
-                    cleanliness INTEGER NOT NULL CHECK(cleanliness BETWEEN 1 AND 5),
-                    crowdedness INTEGER NOT NULL CHECK(crowdedness IN (1, 2, 3)),
-                    comment     TEXT,
-                    created_at  TIMESTAMP DEFAULT NOW()
+                CREATE TABLE IF NOT EXISTS park_photos (
+                    id         SERIAL PRIMARY KEY,
+                    park_id    INTEGER NOT NULL REFERENCES parks(id),
+                    photo_url  TEXT NOT NULL,
+                    caption    TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
                 )
             """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_ratings_toilet ON ratings(toilet_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_toilets_latlon  ON toilets(lat, lon)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS page_views (
+                    id         SERIAL PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_parks_latlon ON parks(lat, lon)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_photos_park  ON park_photos(park_id)")
 
 
 # ── OSM データ取得 ────────────────────────────────────────────────────────────
 
-def fetch_osm_toilets():
+def fetch_osm_parks():
     s, w, n, e = TOKYO_BBOX
     query = f"""
-    [out:json][timeout:40][maxsize:30000000];
+    [out:json][timeout:60][maxsize:50000000];
     (
-      node["amenity"="toilets"]({s},{w},{n},{e});
-      way["amenity"="toilets"]({s},{w},{n},{e});
+      node["leisure"="playground"]({s},{w},{n},{e});
+      way["leisure"="playground"]({s},{w},{n},{e});
+      node["leisure"="park"]({s},{w},{n},{e});
+      way["leisure"="park"]({s},{w},{n},{e});
     );
     out center tags;
     """
     try:
         result = subprocess.run(
-            ['curl', '-s', '-m', '60', '-X', 'POST', OVERPASS_URL,
+            ['curl', '-s', '-m', '90', '-X', 'POST', OVERPASS_URL,
              '--data-urlencode', f'data={query}'],
             capture_output=True,
         )
@@ -167,13 +171,16 @@ def fetch_osm_toilets():
                 if lat is None or lon is None:
                     continue
                 tags = el.get("tags", {})
+                ptype = tags.get("leisure", "playground")
+                name  = tags.get("name") or (
+                    "遊び場" if ptype == "playground" else "公園"
+                )
                 cur.execute(
-                    _q("""INSERT INTO toilets (osm_id, lat, lon, name, operator, wheelchair)
+                    _q("""INSERT INTO parks (osm_id, lat, lon, name, operator, park_type)
                        VALUES (%s, %s, %s, %s, %s, %s)
                        ON CONFLICT (osm_id) DO NOTHING"""),
-                    (str(el["id"]), lat, lon,
-                     tags.get("name"), tags.get("operator"),
-                     1 if tags.get("wheelchair") == "yes" else 0),
+                    (str(el["id"]), lat, lon, name,
+                     tags.get("operator"), ptype),
                 )
                 inserted += cur.rowcount
         print(f"[OSM] {len(elements)} 件取得 / {inserted} 件新規登録")
@@ -190,126 +197,117 @@ def startup():
     init_db()
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM toilets")
+        cur.execute("SELECT COUNT(*) FROM parks")
         count = cur.fetchone()[0]
     if count == 0:
-        print("[OSM] トイレデータを初回取得中（バックグラウンド）...")
-        threading.Thread(target=fetch_osm_toilets, daemon=True).start()
+        print("[OSM] 公園データを初回取得中（バックグラウンド）...")
+        threading.Thread(target=fetch_osm_parks, daemon=True).start()
     else:
-        print(f"[DB] トイレ {count} 件が登録済みです")
+        print(f"[DB] 公園 {count} 件が登録済みです")
 
 
 # ── モデル ────────────────────────────────────────────────────────────────────
 
-class RatingIn(BaseModel):
-    cleanliness: int      = Field(..., ge=1, le=5)
-    crowdedness: int      = Field(..., ge=1, le=3)
-    comment:     str|None = Field(None, max_length=300)
+class PhotoIn(BaseModel):
+    photo_url: str  = Field(..., max_length=2048)
+    caption:   str | None = Field(None, max_length=100)
 
-class ToiletIn(BaseModel):
-    lat:           float    = Field(..., ge=35.0, le=36.0)
-    lon:           float    = Field(..., ge=138.0, le=141.0)
-    name:          str|None = Field(None, max_length=50)
-    facility_type: str|None = Field(None)
+class ParkIn(BaseModel):
+    lat:       float    = Field(..., ge=35.0, le=36.0)
+    lon:       float    = Field(..., ge=138.0, le=141.0)
+    name:      str | None = Field(None, max_length=60)
+    park_type: str | None = Field(None)
 
 
-# ── API エンドポイント ─────────────────────────────────────────────────────────
+# ── API ───────────────────────────────────────────────────────────────────────
 
-@app.get("/api/toilets")
-def list_toilets(
+@app.get("/api/parks")
+def list_parks(
     min_lat: Optional[float] = Query(None),
     max_lat: Optional[float] = Query(None),
     min_lon: Optional[float] = Query(None),
     max_lon: Optional[float] = Query(None),
-    limit:   int             = Query(600, le=1000),
+    limit:   int             = Query(800, le=1500),
 ):
     with get_db() as conn:
         cur = conn.cursor()
         if all(v is not None for v in [min_lat, max_lat, min_lon, max_lon]):
             cur.execute(_q("""
-                SELECT t.id, t.lat, t.lon,
-                    COALESCE(t.name,'公衆トイレ') AS name,
-                    t.wheelchair, t.facility_type,
-                    COUNT(r.id)                            AS rating_count,
-                    ROUND(AVG(r.cleanliness)::numeric, 1)  AS avg_clean,
-                    ROUND(AVG(r.crowdedness)::numeric, 1)  AS avg_crowd
-                FROM toilets t
-                LEFT JOIN ratings r ON r.toilet_id = t.id
-                WHERE t.lat BETWEEN %s AND %s AND t.lon BETWEEN %s AND %s
-                GROUP BY t.id LIMIT %s
+                SELECT p.id, p.lat, p.lon,
+                       COALESCE(p.name,'公園') AS name,
+                       p.park_type,
+                       COUNT(ph.id) AS photo_count
+                FROM parks p
+                LEFT JOIN park_photos ph ON ph.park_id = p.id
+                WHERE p.lat BETWEEN %s AND %s AND p.lon BETWEEN %s AND %s
+                GROUP BY p.id LIMIT %s
             """), (min_lat, max_lat, min_lon, max_lon, limit))
         else:
             cur.execute(_q("""
-                SELECT t.id, t.lat, t.lon,
-                    COALESCE(t.name,'公衆トイレ') AS name,
-                    t.wheelchair, t.facility_type,
-                    COUNT(r.id)                            AS rating_count,
-                    ROUND(AVG(r.cleanliness)::numeric, 1)  AS avg_clean,
-                    ROUND(AVG(r.crowdedness)::numeric, 1)  AS avg_crowd
-                FROM toilets t
-                LEFT JOIN ratings r ON r.toilet_id = t.id
-                GROUP BY t.id LIMIT %s
+                SELECT p.id, p.lat, p.lon,
+                       COALESCE(p.name,'公園') AS name,
+                       p.park_type,
+                       COUNT(ph.id) AS photo_count
+                FROM parks p
+                LEFT JOIN park_photos ph ON ph.park_id = p.id
+                GROUP BY p.id LIMIT %s
             """), (limit,))
         return _fetchall(cur)
 
 
-@app.get("/api/toilets/{toilet_id}")
-def get_toilet(toilet_id: int):
+@app.get("/api/parks/{park_id}")
+def get_park(park_id: int):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(_q("""
-            SELECT t.id, t.osm_id, t.lat, t.lon,
-                COALESCE(t.name,'公衆トイレ') AS name,
-                t.operator, t.wheelchair, t.facility_type,
-                COUNT(r.id)                            AS rating_count,
-                ROUND(AVG(r.cleanliness)::numeric, 1)  AS avg_clean,
-                ROUND(AVG(r.crowdedness)::numeric, 1)  AS avg_crowd
-            FROM toilets t
-            LEFT JOIN ratings r ON r.toilet_id = t.id
-            WHERE t.id = %s GROUP BY t.id
-        """), (toilet_id,))
-        t = _fetchone(cur)
-        if not t:
+            SELECT p.id, p.osm_id, p.lat, p.lon,
+                   COALESCE(p.name,'公園') AS name,
+                   p.operator, p.park_type, p.source,
+                   COUNT(ph.id) AS photo_count
+            FROM parks p
+            LEFT JOIN park_photos ph ON ph.park_id = p.id
+            WHERE p.id = %s GROUP BY p.id
+        """), (park_id,))
+        park = _fetchone(cur)
+        if not park:
             raise HTTPException(status_code=404, detail="Not found")
         cur.execute(_q("""
-            SELECT cleanliness, crowdedness, comment, created_at
-            FROM ratings WHERE toilet_id = %s
-            ORDER BY created_at DESC LIMIT 5
-        """), (toilet_id,))
-        t["recent_ratings"] = _fetchall(cur)
-    return t
+            SELECT id, photo_url, caption, created_at
+            FROM park_photos WHERE park_id = %s
+            ORDER BY created_at DESC
+        """), (park_id,))
+        park["photos"] = _fetchall(cur)
+    return park
 
 
-@app.post("/api/toilets/{toilet_id}/ratings", status_code=201)
-def post_rating(toilet_id: int, body: RatingIn):
+@app.post("/api/parks/{park_id}/photos", status_code=201)
+def add_photo(park_id: int, body: PhotoIn):
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(_q("SELECT id FROM toilets WHERE id=%s"), (toilet_id,))
+        cur.execute(_q("SELECT id FROM parks WHERE id=%s"), (park_id,))
         if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Toilet not found")
+            raise HTTPException(status_code=404, detail="Park not found")
         cur.execute(
-            _q("INSERT INTO ratings (toilet_id, cleanliness, crowdedness, comment) VALUES (%s,%s,%s,%s)"),
-            (toilet_id, body.cleanliness, body.crowdedness, body.comment),
+            _q("INSERT INTO park_photos (park_id, photo_url, caption) VALUES (%s,%s,%s)"),
+            (park_id, body.photo_url, body.caption),
         )
     return {"status": "ok"}
 
 
-@app.post("/api/toilets", status_code=201)
-def add_toilet(body: ToiletIn):
+@app.post("/api/parks", status_code=201)
+def add_park(body: ParkIn):
     with get_db() as conn:
         cur = conn.cursor()
         if USE_SQLITE:
             cur.execute(
-                _q("""INSERT INTO toilets (lat, lon, name, source, facility_type)
-                   VALUES (%s, %s, %s, 'user', %s)"""),
-                (body.lat, body.lon, body.name, body.facility_type),
+                _q("INSERT INTO parks (lat, lon, name, park_type, source) VALUES (%s,%s,%s,%s,'user')"),
+                (body.lat, body.lon, body.name, body.park_type or 'playground'),
             )
             new_id = cur.lastrowid
         else:
             cur.execute(
-                """INSERT INTO toilets (lat, lon, name, source, facility_type)
-                   VALUES (%s, %s, %s, 'user', %s) RETURNING id""",
-                (body.lat, body.lon, body.name, body.facility_type),
+                "INSERT INTO parks (lat, lon, name, park_type, source) VALUES (%s,%s,%s,%s,'user') RETURNING id",
+                (body.lat, body.lon, body.name, body.park_type or 'playground'),
             )
             new_id = cur.fetchone()[0]
     return {"id": new_id}
@@ -317,19 +315,32 @@ def add_toilet(body: ToiletIn):
 
 @app.post("/api/sync")
 def sync_osm():
-    threading.Thread(target=fetch_osm_toilets, daemon=True).start()
+    threading.Thread(target=fetch_osm_parks, daemon=True).start()
     return {"status": "syncing"}
+
+
+@app.post("/api/visit", status_code=201)
+def record_visit():
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_SQLITE:
+            cur.execute("INSERT INTO page_views (created_at) VALUES (CURRENT_TIMESTAMP)")
+        else:
+            cur.execute("INSERT INTO page_views (created_at) VALUES (NOW())")
+    return {"status": "ok"}
 
 
 @app.get("/api/stats")
 def stats():
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM toilets")
-        t = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM ratings")
-        r = cur.fetchone()[0]
-    return {"toilets": t, "ratings": r}
+        cur.execute("SELECT COUNT(*) FROM parks")
+        p = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM park_photos")
+        ph = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM page_views")
+        v = cur.fetchone()[0]
+    return {"parks": p, "photos": ph, "visits": v}
 
 
 @app.get("/api/backup")
@@ -338,17 +349,17 @@ def backup():
     import json as _json_mod
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM toilets")
-        toilets = _fetchall(cur)
-        cur.execute("SELECT * FROM ratings")
-        ratings = _fetchall(cur)
+        cur.execute("SELECT * FROM parks")
+        parks = _fetchall(cur)
+        cur.execute("SELECT * FROM park_photos")
+        photos = _fetchall(cur)
     content = _json_mod.dumps(
-        {"toilets": toilets, "ratings": ratings},
+        {"parks": parks, "photos": photos},
         ensure_ascii=False, default=str, indent=2
     )
     return JSONResponse(
         content=_json_mod.loads(content),
-        headers={"Content-Disposition": "attachment; filename=toiletmap_backup.json"}
+        headers={"Content-Disposition": "attachment; filename=parkmap_backup.json"}
     )
 
 

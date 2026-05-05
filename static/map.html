@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌳 公園マップ 東京</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header id="header">
+    <div id="header-left">
+      <a href="/" class="header-home" aria-label="トップへ">🏠</a>
+      <span class="header-icon">🌳</span>
+      <h1>公園マップ 東京</h1>
+    </div>
+    <div id="header-right">
+      <span id="park-count">読み込み中…</span>
+      <button id="sync-btn" title="OSMから公園データを取得">🔄</button>
+      <span id="legend">
+        <span class="dot" style="background:#4CAF50"></span>遊び場
+        <span class="dot" style="background:#388E3C"></span>公園
+        <span class="dot" style="background:#FFC107"></span>写真あり
+      </span>
+    </div>
+  </header>
+
+  <div id="map"></div>
+
+  <!-- 詳細パネル -->
+  <div id="panel" class="panel hidden">
+    <div id="panel-handle"></div>
+    <button id="panel-close" aria-label="閉じる">✕</button>
+
+    <div id="panel-body">
+      <h2 id="panel-name"></h2>
+      <p id="panel-meta" class="sub-text"></p>
+
+      <!-- 外部リンク -->
+      <div id="panel-links">
+        <a id="gmap-link" href="#" target="_blank" rel="noopener" class="ext-link-btn gmap">
+          <img src="https://www.google.com/favicon.ico" width="14" height="14" alt="" />
+          Google マップで見る
+        </a>
+        <a id="gmap-photo-link" href="#" target="_blank" rel="noopener" class="ext-link-btn gmap-photo">
+          📸 Google マップの写真
+        </a>
+      </div>
+
+      <!-- 写真ギャラリー -->
+      <div id="panel-gallery-wrap">
+        <div id="photo-fetching" class="hidden photo-fetching-msg">🔍 写真を自動取得中…</div>
+        <div id="panel-gallery"></div>
+        <p id="no-photos" class="no-photos hidden">写真がまだありません。投稿してみましょう！</p>
+      </div>
+
+      <button id="open-photo-btn" class="btn-secondary">📸 遊具の写真を追加（URL）</button>
+    </div>
+  </div>
+
+  <!-- 写真投稿モーダル -->
+  <div id="modal-backdrop" class="hidden"></div>
+  <div id="modal" class="hidden">
+    <div class="modal-header">
+      <h2>遊具の写真を追加</h2>
+      <button id="modal-close" aria-label="閉じる">✕</button>
+    </div>
+    <div id="modal-name" class="modal-park-name"></div>
+
+    <form id="photo-form" novalidate>
+      <div class="form-group">
+        <label>写真URL <span class="required">*</span></label>
+        <input type="url" id="photo-url-input"
+          placeholder="https://... (Google フォト、Imgur など)"
+          maxlength="2048" />
+        <p class="field-hint">Google フォト等で「リンクをコピー」して貼り付けてください</p>
+      </div>
+
+      <div class="form-group">
+        <label>説明 <span class="optional">（任意）</span></label>
+        <input type="text" id="photo-caption-input"
+          placeholder="例：ブランコ・滑り台あり"
+          maxlength="100" />
+      </div>
+
+      <!-- プレビュー -->
+      <div id="photo-preview-wrap" class="hidden">
+        <p class="preview-label">プレビュー</p>
+        <img id="photo-preview" src="" alt="プレビュー" />
+      </div>
+
+      <div id="form-error" class="form-error hidden"></div>
+      <button type="submit" id="submit-btn" class="btn-primary btn-block">投稿する</button>
+    </form>
+
+    <div id="submit-success" class="hidden">
+      <div class="success-icon">✅</div>
+      <p>写真を追加しました！</p>
+      <button id="success-close" class="btn-secondary btn-block">閉じる</button>
+    </div>
+  </div>
+
+  <!-- ライトボックス（写真を大きく表示） -->
+  <div id="lightbox" class="hidden">
+    <div id="lightbox-backdrop"></div>
+    <div id="lightbox-content">
+      <button id="lightbox-close">✕</button>
+      <img id="lightbox-img" src="" alt="" />
+      <p id="lightbox-caption"></p>
+    </div>
+  </div>
+
+  <!-- 公園追加モード -->
+  <div id="add-hint" class="hidden">追加したい場所をタップしてください　✕でキャンセル</div>
+
+  <div id="add-modal-backdrop" class="hidden"></div>
+  <div id="add-modal" class="hidden">
+    <div class="modal-header">
+      <h2>公園を追加</h2>
+      <button id="add-modal-close" aria-label="閉じる">✕</button>
+    </div>
+    <form id="add-form" novalidate>
+      <div class="form-group">
+        <label>種別 <span class="required">*</span></label>
+        <div class="type-btns">
+          <button type="button" class="type-btn active" data-v="playground">🛝 遊び場</button>
+          <button type="button" class="type-btn" data-v="park">🌳 公園</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>名前 <span class="optional">（任意）</span></label>
+        <input type="text" id="add-name" placeholder="例：○○公園" maxlength="60" />
+      </div>
+      <div id="add-error" class="form-error hidden"></div>
+      <button type="submit" id="add-submit-btn" class="btn-primary">追加する</button>
+    </form>
+  </div>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <p>データを読み込み中…</p>
+  </div>
+
+  <button id="locate-fab" aria-label="現在地へ移動">◎</button>
+  <button id="add-fab" aria-label="公園を追加">＋</button>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

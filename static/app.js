@@ -1,9 +1,6 @@
 'use strict';
 
-// ── 定数 ──────────────────────────────────────────────────────────────────────
 const TOKYO_CENTER = [35.6812, 139.7671];
-const STAR_LABELS  = ['', '汚い', 'やや汚い', '普通', 'きれい', 'とてもきれい'];
-const CROWD_LABELS = ['', '😊 空いてる', '😐 ふつう', '😰 混んでる'];
 
 // ── 地図初期化 ────────────────────────────────────────────────────────────────
 const map = L.map('map', { zoomControl: false }).setView(TOKYO_CENTER, 13);
@@ -15,7 +12,6 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-// クラスタグループ（軽量化の核）
 const clusterGroup = L.markerClusterGroup({
   maxClusterRadius: 50,
   showCoverageOnHover: false,
@@ -25,72 +21,47 @@ const clusterGroup = L.markerClusterGroup({
 map.addLayer(clusterGroup);
 
 // ── 状態 ─────────────────────────────────────────────────────────────────────
-let markers       = new Map();  // id → { marker, data }
-let loadedIds     = new Set();  // 取得済み ID（重複防止）
-let currentId     = null;
-let selectedStar  = 0;
-let selectedCrowd = 0;
-let addMode       = false;
-let addLatLng     = null;
-let selectedType  = '公衆';
+let markers    = new Map();
+let loadedIds  = new Set();
+let currentId  = null;
+let addMode    = false;
+let addLatLng  = null;
+let selectedType = 'playground';
 
 // ── ユーティリティ ────────────────────────────────────────────────────────────
-function starsHtml(avg, count) {
-  if (!count) return '<span style="color:#9E9E9E">未評価</span>';
-  const full = Math.round(avg);
-  let html = '';
-  for (let i = 1; i <= 5; i++) {
-    html += `<span style="color:${i <= full ? '#FFC107' : '#DDD'}">★</span>`;
-  }
-  return html;
-}
-
-function markerColor(avg_clean, count) {
-  if (!count)         return '#9E9E9E';
-  if (avg_clean >= 4) return '#4CAF50';
-  if (avg_clean >= 3) return '#FFC107';
-  if (avg_clean >= 2) return '#FF9800';
-  return '#F44336';
-}
-
-function formatDate(str) {
-  if (!str) return '';
-  const d = new Date(str.replace(' ', 'T'));
-  if (isNaN(d)) return str;
-  const diff = Math.floor((new Date() - d) / 60000);
-  if (diff < 2)    return 'たった今';
-  if (diff < 60)   return `${diff}分前`;
-  if (diff < 1440) return `${Math.floor(diff / 60)}時間前`;
-  return `${Math.floor(diff / 1440)}日前`;
-}
-
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function markerColor(parkType, photoCount) {
+  if (photoCount > 0)       return '#FFC107';  // 写真あり → 黄
+  if (parkType === 'park')  return '#388E3C';  // 公園 → 濃緑
+  return '#4CAF50';                            // 遊び場 → 緑
 }
 
 // ── マーカー作成 ──────────────────────────────────────────────────────────────
 function makeIcon(color) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18">
-    <circle cx="9" cy="9" r="8" fill="${color}" stroke="white" stroke-width="2"/>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+    <circle cx="10" cy="10" r="9" fill="${color}" stroke="white" stroke-width="2"/>
   </svg>`;
-  return L.divIcon({ html: svg, className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
+  return L.divIcon({ html: svg, className: '', iconSize: [20, 20], iconAnchor: [10, 10] });
 }
 
-function addMarker(t) {
-  if (markers.has(t.id)) return;
-  const marker = L.marker([t.lat, t.lon], { icon: makeIcon(markerColor(t.avg_clean, t.rating_count)) });
-  marker.on('click', () => openPanel(t.id));
+function addMarker(p) {
+  if (markers.has(p.id)) return;
+  const marker = L.marker([p.lat, p.lon], {
+    icon: makeIcon(markerColor(p.park_type, p.photo_count)),
+  });
+  marker.on('click', () => openPanel(p.id));
   clusterGroup.addLayer(marker);
-  markers.set(t.id, { marker, data: t });
+  markers.set(p.id, { marker, data: p });
 }
 
-function updateMarkerColor(id, avg_clean, count) {
+function updateMarkerColor(id, parkType, photoCount) {
   const entry = markers.get(id);
   if (!entry) return;
-  entry.marker.setIcon(makeIcon(markerColor(avg_clean, count)));
+  entry.marker.setIcon(makeIcon(markerColor(parkType, photoCount)));
 }
 
 // ── ビューポート読み込み ──────────────────────────────────────────────────────
@@ -105,17 +76,17 @@ async function loadViewport() {
     max_lon: b.getEast().toFixed(5),
   });
   try {
-    const data = await fetch(`/api/toilets?${p}`).then(r => r.json());
-    data.forEach(t => {
-      if (!loadedIds.has(t.id)) {
-        loadedIds.add(t.id);
-        addMarker(t);
+    const data = await fetch(`/api/parks?${p}`).then(r => r.json());
+    data.forEach(park => {
+      if (!loadedIds.has(park.id)) {
+        loadedIds.add(park.id);
+        addMarker(park);
       }
     });
-    document.getElementById('toilet-count').textContent = `${loadedIds.size.toLocaleString()} 件`;
+    document.getElementById('park-count').textContent = `${loadedIds.size.toLocaleString()} 件`;
   } catch (e) {
     console.error('データ読み込み失敗:', e);
-    document.getElementById('toilet-count').textContent = '取得失敗';
+    document.getElementById('park-count').textContent = '取得失敗';
   } finally {
     document.getElementById('loading').classList.add('hidden');
   }
@@ -128,6 +99,31 @@ function scheduleLoad() {
 
 map.on('moveend', scheduleLoad);
 
+// ── Wikipedia 写真取得 ────────────────────────────────────────────────────────
+async function fetchWikiPhoto(parkName) {
+  if (!parkName || ['遊び場', '公園', ''].includes(parkName)) return null;
+  try {
+    const r = await fetch(
+      `https://ja.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(parkName)}`,
+      { headers: { Accept: 'application/json' } }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.thumbnail?.source || d.originalimage?.source || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── Google マップ URL ─────────────────────────────────────────────────────────
+function gmapUrl(lat, lon, name) {
+  return `https://www.google.com/maps/search/${encodeURIComponent(name)}/@${lat},${lon},17z`;
+}
+function gmapPhotoUrl(lat, lon, name) {
+  // Google マップで写真タブを開く最も確実な方法
+  return `https://www.google.com/maps/search/${encodeURIComponent(name + ' 公園')}/@${lat},${lon},17z/data=!5m1!1e4`;
+}
+
 // ── 詳細パネル ────────────────────────────────────────────────────────────────
 async function openPanel(id) {
   currentId = id;
@@ -135,46 +131,66 @@ async function openPanel(id) {
   if (cached) renderPanel(cached, []);
   showPanel();
   try {
-    const detail = await fetch(`/api/toilets/${id}`).then(r => r.json());
-    renderPanel(detail, detail.recent_ratings || []);
+    const detail = await fetch(`/api/parks/${id}`).then(r => r.json());
+    renderPanel(detail, detail.photos || []);
     if (markers.has(id)) markers.get(id).data = detail;
+
+    // 写真がなければ Wikipedia から自動取得を試みる
+    if ((detail.photos || []).length === 0) {
+      document.getElementById('photo-fetching').classList.remove('hidden');
+      const wikiUrl = await fetchWikiPhoto(detail.name);
+      document.getElementById('photo-fetching').classList.add('hidden');
+      if (wikiUrl) {
+        // DB に保存
+        await fetch(`/api/parks/${id}/photos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photo_url: wikiUrl, caption: 'Wikipedia より自動取得' }),
+        });
+        // パネルを更新
+        const updated = await fetch(`/api/parks/${id}`).then(r => r.json());
+        renderPanel(updated, updated.photos || []);
+        updateMarkerColor(id, updated.park_type, updated.photo_count);
+        if (markers.has(id)) markers.get(id).data = updated;
+      } else {
+        document.getElementById('no-photos').classList.remove('hidden');
+      }
+    }
   } catch (e) {
     console.error('詳細取得失敗:', e);
   }
 }
 
-function renderPanel(t, ratings) {
-  document.getElementById('panel-name').textContent = t.name || '公衆トイレ';
-  const opEl = document.getElementById('panel-operator');
-  opEl.textContent = t.operator ? `管理: ${t.operator}` : (t.facility_type ? `種別: ${t.facility_type}` : '');
-  document.getElementById('panel-stars').innerHTML = starsHtml(t.avg_clean, t.rating_count);
-  document.getElementById('panel-clean-val').textContent =
-    t.rating_count ? `${t.avg_clean} / 5` : '—';
-  document.getElementById('panel-crowd-icon').textContent =
-    t.rating_count ? CROWD_LABELS[Math.round(t.avg_crowd)].split(' ')[0] : '—';
-  document.getElementById('panel-crowd-val').textContent =
-    t.rating_count ? CROWD_LABELS[Math.round(t.avg_crowd)].split(' ').slice(1).join(' ') : '';
-  document.getElementById('panel-count').textContent = t.rating_count ? `${t.rating_count}` : '0';
-  document.getElementById('panel-wc-card').style.display = t.wheelchair ? '' : 'none';
+function renderPanel(p, photos) {
+  document.getElementById('panel-name').textContent = p.name || '公園';
+  const typeLabel = p.park_type === 'playground' ? '🛝 遊び場' : '🌳 公園';
+  const meta = [typeLabel, p.operator ? `管理: ${p.operator}` : ''].filter(Boolean).join('　');
+  document.getElementById('panel-meta').textContent = meta;
 
-  const list   = document.getElementById('comment-list');
-  const noComm = document.getElementById('no-comments');
-  list.innerHTML = '';
-  const withComment = ratings.filter(r => r.comment);
-  if (withComment.length === 0) {
-    noComm.classList.remove('hidden');
-  } else {
-    noComm.classList.add('hidden');
-    withComment.forEach(r => {
-      const li = document.createElement('li');
-      li.innerHTML = `
-        <div>${escHtml(r.comment)}</div>
-        <div class="cm-meta">
-          清潔さ ${'★'.repeat(r.cleanliness)}${'☆'.repeat(5 - r.cleanliness)}
-          &nbsp;${CROWD_LABELS[r.crowdedness]}
-          &nbsp;${formatDate(r.created_at)}
-        </div>`;
-      list.appendChild(li);
+  // Google マップリンク
+  const name = p.name || '公園';
+  document.getElementById('gmap-link').href = gmapUrl(p.lat, p.lon, name);
+  document.getElementById('gmap-photo-link').href = gmapPhotoUrl(p.lat, p.lon, name);
+
+  const gallery  = document.getElementById('panel-gallery');
+  const noPhotos = document.getElementById('no-photos');
+  gallery.innerHTML = '';
+  noPhotos.classList.add('hidden');
+  document.getElementById('photo-fetching').classList.add('hidden');
+
+  if (photos.length > 0) {
+    photos.forEach(ph => {
+      const item = document.createElement('div');
+      item.className = 'gallery-item';
+      item.innerHTML = `
+        <img src="${escHtml(ph.photo_url)}" alt="${escHtml(ph.caption || '')}"
+             onerror="this.parentElement.style.display='none'" />
+        ${ph.caption ? `<p class="gallery-caption">${escHtml(ph.caption)}</p>` : ''}
+      `;
+      item.querySelector('img').addEventListener('click', () =>
+        openLightbox(ph.photo_url, ph.caption || '')
+      );
+      gallery.appendChild(item);
     });
   }
 }
@@ -192,16 +208,37 @@ function closePanel() {
   currentId = null;
 }
 
-// ── 評価モーダル ──────────────────────────────────────────────────────────────
-function openModal() {
+// ── ライトボックス ────────────────────────────────────────────────────────────
+function openLightbox(url, caption) {
+  document.getElementById('lightbox-img').src = url;
+  document.getElementById('lightbox-caption').textContent = caption;
+  document.getElementById('lightbox').classList.remove('hidden');
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.add('hidden');
+  document.getElementById('lightbox-img').src = '';
+}
+
+document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+document.getElementById('lightbox-backdrop').addEventListener('click', closeLightbox);
+
+// ── 写真投稿モーダル ──────────────────────────────────────────────────────────
+function openPhotoModal() {
   if (!currentId) return;
-  resetForm();
+  document.getElementById('photo-url-input').value = '';
+  document.getElementById('photo-caption-input').value = '';
+  document.getElementById('photo-preview-wrap').classList.add('hidden');
+  document.getElementById('photo-preview').src = '';
+  document.getElementById('form-error').classList.add('hidden');
+  document.getElementById('submit-btn').disabled = false;
+  document.getElementById('submit-btn').textContent = '投稿する';
+  document.getElementById('photo-form').classList.remove('hidden');
+  document.getElementById('submit-success').classList.add('hidden');
   document.getElementById('modal-name').textContent =
     document.getElementById('panel-name').textContent;
   document.getElementById('modal').classList.remove('hidden');
   document.getElementById('modal-backdrop').classList.remove('hidden');
-  document.getElementById('submit-success').classList.add('hidden');
-  document.getElementById('rating-form').classList.remove('hidden');
 }
 
 function closeModal() {
@@ -209,81 +246,49 @@ function closeModal() {
   document.getElementById('modal-backdrop').classList.add('hidden');
 }
 
-function resetForm() {
-  selectedStar  = 0;
-  selectedCrowd = 0;
-  document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.crowd-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('star-label').textContent = 'タップして評価';
-  document.getElementById('comment-input').value = '';
-  document.getElementById('char-count').textContent = '0 / 200';
-  document.getElementById('form-error').classList.add('hidden');
-  document.getElementById('submit-btn').disabled = false;
-  document.getElementById('submit-btn').textContent = '投稿する';
-}
-
-document.querySelectorAll('.star').forEach(star => {
-  star.addEventListener('click', () => {
-    selectedStar = parseInt(star.dataset.v);
-    document.querySelectorAll('.star').forEach((s, i) =>
-      s.classList.toggle('active', i < selectedStar));
-    document.getElementById('star-label').textContent = STAR_LABELS[selectedStar];
-  });
-  star.addEventListener('mouseover', () => {
-    const v = parseInt(star.dataset.v);
-    document.querySelectorAll('.star').forEach((s, i) => { s.style.color = i < v ? '#FFC107' : ''; });
-  });
-  star.addEventListener('mouseout', () => {
-    document.querySelectorAll('.star').forEach((s, i) => {
-      s.style.color = i < selectedStar ? '#FFC107' : '';
-    });
-  });
+// URL入力でプレビュー
+document.getElementById('photo-url-input').addEventListener('input', function () {
+  const url = this.value.trim();
+  const wrap = document.getElementById('photo-preview-wrap');
+  const img  = document.getElementById('photo-preview');
+  if (url.startsWith('http')) {
+    img.src = url;
+    wrap.classList.remove('hidden');
+    img.onerror = () => wrap.classList.add('hidden');
+  } else {
+    wrap.classList.add('hidden');
+  }
 });
 
-document.querySelectorAll('.crowd-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    selectedCrowd = parseInt(btn.dataset.v);
-    document.querySelectorAll('.crowd-btn').forEach(b => b.classList.toggle('active', b === btn));
-  });
-});
-
-document.getElementById('comment-input').addEventListener('input', function () {
-  document.getElementById('char-count').textContent = `${this.value.length} / 200`;
-});
-
-document.getElementById('rating-form').addEventListener('submit', async e => {
+document.getElementById('photo-form').addEventListener('submit', async e => {
   e.preventDefault();
   const errEl = document.getElementById('form-error');
   errEl.classList.add('hidden');
-  if (!selectedStar) {
-    errEl.textContent = '清潔さを選択してください';
+  const url     = document.getElementById('photo-url-input').value.trim();
+  const caption = document.getElementById('photo-caption-input').value.trim() || null;
+
+  if (!url || !url.startsWith('http')) {
+    errEl.textContent = '有効な写真URLを入力してください';
     errEl.classList.remove('hidden');
     return;
   }
-  if (!selectedCrowd) {
-    errEl.textContent = '混雑具合を選択してください';
-    errEl.classList.remove('hidden');
-    return;
-  }
+
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
   btn.textContent = '送信中…';
   try {
-    const res = await fetch(`/api/toilets/${currentId}/ratings`, {
+    const res = await fetch(`/api/parks/${currentId}/photos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        cleanliness: selectedStar,
-        crowdedness: selectedCrowd,
-        comment: document.getElementById('comment-input').value || null,
-      }),
+      body: JSON.stringify({ photo_url: url, caption }),
     });
     if (!res.ok) throw new Error(await res.text());
-    document.getElementById('rating-form').classList.add('hidden');
+    document.getElementById('photo-form').classList.add('hidden');
     document.getElementById('submit-success').classList.remove('hidden');
-    const detail = await fetch(`/api/toilets/${currentId}`).then(r => r.json());
-    renderPanel(detail, detail.recent_ratings || []);
-    updateMarkerColor(currentId, detail.avg_clean, detail.rating_count);
+    // パネル更新
+    const detail = await fetch(`/api/parks/${currentId}`).then(r => r.json());
+    renderPanel(detail, detail.photos || []);
+    updateMarkerColor(currentId, detail.park_type, detail.photo_count);
     if (markers.has(currentId)) markers.get(currentId).data = detail;
   } catch (err) {
     errEl.textContent = `送信失敗: ${err.message}`;
@@ -293,7 +298,7 @@ document.getElementById('rating-form').addEventListener('submit', async e => {
   }
 });
 
-// ── 現在地 ───────────────────────────────────────────────────────────────────
+// ── 現在地 ────────────────────────────────────────────────────────────────────
 let locationMarker = null;
 
 function flyToCurrentLocation() {
@@ -308,7 +313,6 @@ function flyToCurrentLocation() {
       btn.classList.remove('locating');
       const { latitude: lat, longitude: lng } = pos.coords;
       map.setView([lat, lng], 16);
-
       if (locationMarker) locationMarker.remove();
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">
         <circle cx="10" cy="10" r="7" fill="#1976D2" stroke="white" stroke-width="2.5"/>
@@ -322,7 +326,7 @@ function flyToCurrentLocation() {
     err => {
       btn.classList.remove('locating');
       const msg = {
-        1: '位置情報の使用が拒否されました。ブラウザの設定を確認してください。',
+        1: '位置情報の使用が拒否されました。',
         2: '位置情報を取得できませんでした。',
         3: '位置情報の取得がタイムアウトしました。',
       }[err.code] || '位置情報の取得に失敗しました。';
@@ -332,7 +336,7 @@ function flyToCurrentLocation() {
   );
 }
 
-// ── トイレ追加機能 ────────────────────────────────────────────────────────────
+// ── 公園追加機能 ──────────────────────────────────────────────────────────────
 function toggleAddMode() {
   addMode = !addMode;
   const fab  = document.getElementById('add-fab');
@@ -354,9 +358,9 @@ function openAddModal() {
   document.getElementById('add-error').classList.add('hidden');
   document.getElementById('add-submit-btn').disabled = false;
   document.getElementById('add-submit-btn').textContent = '追加する';
-  selectedType = '公衆';
+  selectedType = 'playground';
   document.querySelectorAll('.type-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.v === '公衆'));
+    b.classList.toggle('active', b.dataset.v === 'playground'));
   document.getElementById('add-modal').classList.remove('hidden');
   document.getElementById('add-modal-backdrop').classList.remove('hidden');
 }
@@ -381,22 +385,21 @@ document.getElementById('add-form').addEventListener('submit', async e => {
   btn.disabled = true;
   btn.textContent = '送信中…';
   try {
-    const res = await fetch('/api/toilets', {
+    const res = await fetch('/api/parks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lat: addLatLng.lat, lon: addLatLng.lng, name, facility_type: selectedType }),
+      body: JSON.stringify({ lat: addLatLng.lat, lon: addLatLng.lng, name, park_type: selectedType }),
     });
     if (!res.ok) throw new Error(await res.text());
     const { id } = await res.json();
-    const newT = {
+    const newP = {
       id, lat: addLatLng.lat, lon: addLatLng.lng,
-      name: name || `${selectedType}トイレ`,
-      facility_type: selectedType,
-      rating_count: 0, avg_clean: null, avg_crowd: null, wheelchair: 0,
+      name: name || (selectedType === 'playground' ? '遊び場' : '公園'),
+      park_type: selectedType, photo_count: 0,
     };
     loadedIds.add(id);
-    addMarker(newT);
-    document.getElementById('toilet-count').textContent = `${loadedIds.size.toLocaleString()} 件`;
+    addMarker(newP);
+    document.getElementById('park-count').textContent = `${loadedIds.size.toLocaleString()} 件`;
     closeAddModal();
     toggleAddMode();
     openPanel(id);
@@ -410,7 +413,7 @@ document.getElementById('add-form').addEventListener('submit', async e => {
 
 // ── イベントリスナー ──────────────────────────────────────────────────────────
 document.getElementById('panel-close').addEventListener('click', closePanel);
-document.getElementById('open-form-btn').addEventListener('click', openModal);
+document.getElementById('open-photo-btn').addEventListener('click', openPhotoModal);
 document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal-backdrop').addEventListener('click', closeModal);
 document.getElementById('success-close').addEventListener('click', closeModal);
@@ -433,6 +436,71 @@ map.on('click', e => {
   }
   closePanel();
 });
+
+// ── OSM 同期 ─────────────────────────────────────────────────────────────────
+let syncPollTimer = null;
+
+async function startSync() {
+  const btn = document.getElementById('sync-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  document.getElementById('park-count').textContent = 'OSM取得中…';
+
+  try {
+    await fetch('/api/sync', { method: 'POST' });
+  } catch (e) { /* ignore */ }
+
+  // 公園数が増えるまでポーリング
+  let prev = loadedIds.size;
+  let tries = 0;
+  clearInterval(syncPollTimer);
+  syncPollTimer = setInterval(async () => {
+    tries++;
+    try {
+      const d = await fetch('/api/stats').then(r => r.json());
+      document.getElementById('park-count').textContent = `取得中… ${d.parks.toLocaleString()} 件`;
+      if (d.parks > prev || tries > 60) {
+        clearInterval(syncPollTimer);
+        btn.disabled = false;
+        btn.textContent = '🔄';
+        // マーカーをリセットして再読み込み
+        clusterGroup.clearLayers();
+        markers.clear();
+        loadedIds.clear();
+        loadViewport();
+      }
+      prev = d.parks;
+    } catch (e) { /* ignore */ }
+  }, 5000);
+}
+
+document.getElementById('sync-btn').addEventListener('click', () => {
+  if (confirm('OSM（OpenStreetMap）から東京の公園データを取得します。\n数分かかります。よろしいですか？')) {
+    startSync();
+  }
+});
+
+// 起動時にDBが空ならば自動でポーリング開始（初回起動時の同期を監視）
+fetch('/api/stats').then(r => r.json()).then(d => {
+  if (d.parks === 0) {
+    document.getElementById('park-count').textContent = 'OSM取得中…';
+    let tries = 0;
+    const t = setInterval(async () => {
+      tries++;
+      try {
+        const d2 = await fetch('/api/stats').then(r => r.json());
+        document.getElementById('park-count').textContent = `取得中… ${d2.parks.toLocaleString()} 件`;
+        if (d2.parks > 0 || tries > 60) {
+          clearInterval(t);
+          clusterGroup.clearLayers();
+          markers.clear();
+          loadedIds.clear();
+          loadViewport();
+        }
+      } catch (e) { /* ignore */ }
+    }, 5000);
+  }
+}).catch(() => {});
 
 // ── 起動 ─────────────────────────────────────────────────────────────────────
 loadViewport();
