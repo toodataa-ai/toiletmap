@@ -5,13 +5,18 @@ DATABASE_URL 未設定時は parks.db (SQLite) を使用
 """
 
 import os
+import re
 import sqlite3
 import threading
 import subprocess
+import time
 import json as _json
 from contextlib import contextmanager
 from typing import Optional
+from xml.etree import ElementTree
 
+import requests as _requests
+from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -29,6 +34,19 @@ if not USE_SQLITE:
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 TOKYO_BBOX   = (35.50, 139.40, 35.90, 139.95)
+
+KOENTANBO_BASE     = "https://www.koentanbo.com"
+KOENTANBO_UA       = "parkmap-bot/1.0"
+KOENTANBO_SITEMAPS = [
+    f"{KOENTANBO_BASE}/post-sitemap.xml",
+    f"{KOENTANBO_BASE}/post-sitemap2.xml",
+    f"{KOENTANBO_BASE}/post-sitemap3.xml",
+    f"{KOENTANBO_BASE}/post-sitemap4.xml",
+]
+# 関東広域バウンディングボックス
+KANTO_BBOX = (34.5, 138.5, 37.0, 141.5)
+
+_kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -317,6 +335,144 @@ def add_park(body: ParkIn):
 def sync_osm():
     threading.Thread(target=fetch_osm_parks, daemon=True).start()
     return {"status": "syncing"}
+
+
+# ── 公園探訪郊外 スクレイピング ───────────────────────────────────────────────
+
+def _parse_koentanbo_page(url: str) -> dict | None:
+    try:
+        r = _requests.get(url, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        if r.status_code != 200:
+            return None
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # 公園名: <h2> タグから
+        h2 = soup.find("h2")
+        name = h2.get_text(strip=True) if h2 else None
+
+        # 緯度経度: Google マップリンクの daddr= パラメータから
+        lat = lon = None
+        for a in soup.find_all("a", href=True):
+            m = re.search(r"daddr=([\d.]+),\s*([\d.]+)", a["href"])
+            if m:
+                lat, lon = float(m.group(1)), float(m.group(2))
+                break
+        if lat is None:
+            # フォールバック: iframe の ll= パラメータ
+            iframe = soup.find("iframe", src=True)
+            if iframe:
+                m = re.search(r"ll=([\d.]+),\s*([\d.]+)", iframe["src"])
+                if m:
+                    lat, lon = float(m.group(1)), float(m.group(2))
+
+        if lat is None or lon is None:
+            return None
+
+        # 写真: wp-image クラスを持つ img タグ
+        photos = []
+        seen = set()
+        for img in soup.find_all("img"):
+            cls = " ".join(img.get("class") or [])
+            src = img.get("src", "")
+            if "wp-image" in cls and "/wp-content/uploads/" in src:
+                if src.startswith("/"):
+                    src = KOENTANBO_BASE + src
+                if src not in seen:
+                    seen.add(src)
+                    photos.append(src)
+
+        return {"name": name, "lat": lat, "lon": lon, "photos": photos[:5]}
+    except Exception as exc:
+        print(f"[koentanbo] parse error {url}: {exc}")
+        return None
+
+
+def fetch_koentanbo_parks():
+    global _kb_status
+    _kb_status = {"running": True, "total": 0, "done": 0, "inserted": 0}
+    headers = {"User-Agent": KOENTANBO_UA}
+
+    # サイトマップから全公園 URL を収集
+    urls: list[str] = []
+    for sm_url in KOENTANBO_SITEMAPS:
+        try:
+            r = _requests.get(sm_url, timeout=15, headers=headers)
+            if r.status_code != 200:
+                continue
+            root = ElementTree.fromstring(r.content)
+            ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+            for loc in root.findall(".//sm:loc", ns):
+                u = (loc.text or "").strip()
+                if (u.startswith(KOENTANBO_BASE + "/")
+                        and u != KOENTANBO_BASE + "/"
+                        and not re.search(r"/(list|ranking|about|tag|category|page)/", u)):
+                    slug = u.rstrip("/").split("/")[-1]
+                    if slug and len(slug) > 2:
+                        urls.append(u)
+        except Exception as exc:
+            print(f"[koentanbo] sitemap error {sm_url}: {exc}")
+
+    urls = list(dict.fromkeys(urls))  # 重複除去
+    _kb_status["total"] = len(urls)
+    print(f"[koentanbo] {len(urls)} 件の URL を取得")
+
+    S, W, N, E = KANTO_BBOX
+    for url in urls:
+        time.sleep(0.4)
+        data = _parse_koentanbo_page(url)
+        _kb_status["done"] += 1
+
+        if not data:
+            continue
+        lat, lon = data["lat"], data["lon"]
+        if not (S <= lat <= N and W <= lon <= E):
+            continue
+
+        slug    = url.rstrip("/").split("/")[-1]
+        osm_id  = f"koentanbo_{slug}"
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    _q("""INSERT INTO parks (osm_id, lat, lon, name, park_type, source)
+                          VALUES (%s,%s,%s,%s,'park','koentanbo')
+                          ON CONFLICT (osm_id) DO NOTHING"""),
+                    (osm_id, lat, lon, data["name"] or "公園"),
+                )
+                if cur.rowcount:
+                    _kb_status["inserted"] += 1
+                    cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                    row = cur.fetchone()
+                    if row:
+                        park_id = row[0]
+                        for photo_url in data["photos"][:3]:
+                            cur.execute(
+                                _q("INSERT INTO park_photos (park_id, photo_url, caption)"
+                                   " VALUES (%s,%s,%s)"),
+                                (park_id, photo_url, None),
+                            )
+        except Exception as exc:
+            print(f"[koentanbo] db error {url}: {exc}")
+
+        if _kb_status["done"] % 100 == 0:
+            print(f"[koentanbo] {_kb_status['done']}/{len(urls)} 件処理 "
+                  f"({_kb_status['inserted']} 件登録)")
+
+    _kb_status["running"] = False
+    print(f"[koentanbo] 完了: {_kb_status['inserted']} 件登録")
+
+
+@app.post("/api/sync/koentanbo")
+def sync_koentanbo():
+    if _kb_status["running"]:
+        return {"status": "already_running", **_kb_status}
+    threading.Thread(target=fetch_koentanbo_parks, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/koentanbo/status")
+def koentanbo_status():
+    return _kb_status
 
 
 @app.post("/api/visit", status_code=201)

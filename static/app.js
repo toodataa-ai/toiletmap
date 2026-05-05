@@ -480,6 +480,42 @@ document.getElementById('sync-btn').addEventListener('click', () => {
   }
 });
 
+// ── 公園探訪郊外 同期 ─────────────────────────────────────────────────────────
+let kbPollTimer = null;
+
+async function startKoentanboSync() {
+  const btn = document.getElementById('kb-sync-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳';
+
+  try { await fetch('/api/sync/koentanbo', { method: 'POST' }); } catch (e) { /* ignore */ }
+
+  clearInterval(kbPollTimer);
+  kbPollTimer = setInterval(async () => {
+    try {
+      const s = await fetch('/api/sync/koentanbo/status').then(r => r.json());
+      const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
+      document.getElementById('park-count').textContent =
+        `取得中… ${s.done.toLocaleString()}/${s.total.toLocaleString()} (${pct}%) 登録:${s.inserted}件`;
+      if (!s.running && s.done > 0) {
+        clearInterval(kbPollTimer);
+        btn.disabled = false;
+        btn.textContent = '🌐';
+        clusterGroup.clearLayers();
+        markers.clear();
+        loadedIds.clear();
+        loadViewport();
+      }
+    } catch (e) { /* ignore */ }
+  }, 3000);
+}
+
+document.getElementById('kb-sync-btn').addEventListener('click', () => {
+  if (confirm('公園探訪郊外（koentanbo.com）から公園データ・写真を取得します。\n3,000件以上あるため20〜30分かかります。よろしいですか？')) {
+    startKoentanboSync();
+  }
+});
+
 // 起動時にDBが空ならば自動でポーリング開始（初回起動時の同期を監視）
 fetch('/api/stats').then(r => r.json()).then(d => {
   if (d.parks === 0) {
