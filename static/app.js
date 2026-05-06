@@ -437,6 +437,40 @@ map.on('click', e => {
   closePanel();
 });
 
+// ── 進捗UI ───────────────────────────────────────────────────────────────────
+const progressBar  = document.getElementById('progress-bar');
+const syncCard     = document.getElementById('sync-card');
+const syncCardFill = document.getElementById('sync-card-bar-fill');
+
+function showSyncCard(label, pct, detail, indeterminate = false) {
+  syncCard.classList.remove('hidden');
+  document.getElementById('sync-card-label').textContent = label;
+  document.getElementById('sync-card-detail').textContent = detail;
+  const w = Math.max(2, Math.min(100, pct));
+  syncCardFill.style.width = `${w}%`;
+  if (indeterminate) {
+    progressBar.style.width = '0';
+    progressBar.classList.add('indeterminate');
+  } else {
+    progressBar.classList.remove('indeterminate');
+    progressBar.style.width = `${w}%`;
+  }
+}
+
+function hideSyncCard() {
+  syncCard.classList.add('hidden');
+  progressBar.classList.remove('indeterminate');
+  progressBar.style.width = '100%';
+  setTimeout(() => { progressBar.style.width = '0'; }, 600);
+}
+
+function reloadMarkers() {
+  clusterGroup.clearLayers();
+  markers.clear();
+  loadedIds.clear();
+  loadViewport();
+}
+
 // ── OSM 同期 ─────────────────────────────────────────────────────────────────
 let syncPollTimer = null;
 
@@ -444,30 +478,26 @@ async function startSync() {
   const btn = document.getElementById('sync-btn');
   btn.disabled = true;
   btn.textContent = '⏳';
-  document.getElementById('park-count').textContent = 'OSM取得中…';
+  showSyncCard('🔄 OSMから公園データを取得中…', 0, '開始しています…', true);
 
-  try {
-    await fetch('/api/sync', { method: 'POST' });
-  } catch (e) { /* ignore */ }
+  try { await fetch('/api/sync', { method: 'POST' }); } catch (e) { /* ignore */ }
 
-  // 公園数が増えるまでポーリング
-  let prev = loadedIds.size;
+  let prev = 0;
   let tries = 0;
   clearInterval(syncPollTimer);
   syncPollTimer = setInterval(async () => {
     tries++;
     try {
       const d = await fetch('/api/stats').then(r => r.json());
-      document.getElementById('park-count').textContent = `取得中… ${d.parks.toLocaleString()} 件`;
+      document.getElementById('park-count').textContent = `${d.parks.toLocaleString()} 件`;
+      showSyncCard('🔄 OSMから公園データを取得中…', 0,
+        `取得済み: ${d.parks.toLocaleString()} 件`, true);
       if (d.parks > prev || tries > 60) {
         clearInterval(syncPollTimer);
         btn.disabled = false;
         btn.textContent = '🔄';
-        // マーカーをリセットして再読み込み
-        clusterGroup.clearLayers();
-        markers.clear();
-        loadedIds.clear();
-        loadViewport();
+        hideSyncCard();
+        reloadMarkers();
       }
       prev = d.parks;
     } catch (e) { /* ignore */ }
@@ -482,11 +512,14 @@ document.getElementById('sync-btn').addEventListener('click', () => {
 
 // ── 公園探訪郊外 同期 ─────────────────────────────────────────────────────────
 let kbPollTimer = null;
+let kbStartTime = 0;
 
 async function startKoentanboSync() {
   const btn = document.getElementById('kb-sync-btn');
   btn.disabled = true;
   btn.textContent = '⏳';
+  kbStartTime = Date.now();
+  showSyncCard('🌐 公園探訪郊外からデータ取得中…', 0, '開始しています…', true);
 
   try { await fetch('/api/sync/koentanbo', { method: 'POST' }); } catch (e) { /* ignore */ }
 
@@ -495,26 +528,42 @@ async function startKoentanboSync() {
     try {
       const s = await fetch('/api/sync/koentanbo/status').then(r => r.json());
       const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
-      const skipMsg = s.skipped > 0 ? ` スキップ:${s.skipped.toLocaleString()}` : '';
+
+      let etaText = '';
+      if (s.done > 10 && s.total > 0) {
+        const elapsed = (Date.now() - kbStartTime) / 1000;
+        const rate    = s.done / elapsed;
+        const eta     = Math.round((s.total - s.done) / rate);
+        etaText = eta > 60
+          ? `　残り約${Math.round(eta / 60)}分`
+          : `　残り約${eta}秒`;
+      }
+
+      const detail = s.total === 0 && s.skipped > 0
+        ? `全件登録済み・更新なし (スキップ: ${s.skipped.toLocaleString()}件)`
+        : `${s.done.toLocaleString()} / ${s.total.toLocaleString()} 件処理`
+          + `　登録/更新: ${s.inserted}件`
+          + (s.skipped > 0 ? `　スキップ: ${s.skipped.toLocaleString()}件` : '')
+          + etaText;
+
       document.getElementById('park-count').textContent =
-        s.total === 0 && s.skipped > 0
-          ? `✅ 全件登録済み・更新なし (${s.skipped.toLocaleString()}件)`
-          : `取得中… ${s.done.toLocaleString()}/${s.total.toLocaleString()} (${pct}%) 登録/更新:${s.inserted}件${skipMsg}`;
+        s.total > 0 ? `${s.done.toLocaleString()}/${s.total.toLocaleString()} 件` : '完了';
+
+      showSyncCard('🌐 公園探訪郊外からデータ取得中…', pct, detail, s.total === 0);
+
       if (!s.running) {
         clearInterval(kbPollTimer);
         btn.disabled = false;
         btn.textContent = '🌐';
-        clusterGroup.clearLayers();
-        markers.clear();
-        loadedIds.clear();
-        loadViewport();
+        hideSyncCard();
+        reloadMarkers();
       }
     } catch (e) { /* ignore */ }
   }, 3000);
 }
 
 document.getElementById('kb-sync-btn').addEventListener('click', () => {
-  if (confirm('公園探訪郊外（koentanbo.com）から公園データ・写真を取得します。\n3,000件以上あるため20〜30分かかります。よろしいですか？')) {
+  if (confirm('公園探訪郊外（koentanbo.com）から公園データ・写真を取得します。\n初回は2〜3分、2回目以降は差分のみなので数秒〜数十秒で完了します。')) {
     startKoentanboSync();
   }
 });
@@ -522,19 +571,19 @@ document.getElementById('kb-sync-btn').addEventListener('click', () => {
 // 起動時にDBが空ならば自動でポーリング開始（初回起動時の同期を監視）
 fetch('/api/stats').then(r => r.json()).then(d => {
   if (d.parks === 0) {
-    document.getElementById('park-count').textContent = 'OSM取得中…';
+    showSyncCard('🔄 公園データを初回取得中…', 0, '開始しています…', true);
     let tries = 0;
     const t = setInterval(async () => {
       tries++;
       try {
         const d2 = await fetch('/api/stats').then(r => r.json());
         document.getElementById('park-count').textContent = `取得中… ${d2.parks.toLocaleString()} 件`;
+        showSyncCard('🔄 公園データを初回取得中…', 0,
+          `取得済み: ${d2.parks.toLocaleString()} 件`, true);
         if (d2.parks > 0 || tries > 60) {
           clearInterval(t);
-          clusterGroup.clearLayers();
-          markers.clear();
-          loadedIds.clear();
-          loadViewport();
+          hideSyncCard();
+          reloadMarkers();
         }
       } catch (e) { /* ignore */ }
     }, 5000);
