@@ -156,14 +156,23 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_parks_latlon ON parks(lat, lon)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_photos_park  ON park_photos(park_id)")
         # マイグレーション: カラムが未存在なら追加
+        # PostgreSQL は ALTER TABLE 失敗でトランザクションがエラー状態になるため SAVEPOINT を使う
         for col_sql in [
             "ALTER TABLE parks ADD COLUMN last_fetched TIMESTAMP",
             "ALTER TABLE park_photos ADD COLUMN photo_source TEXT",
         ]:
-            try:
-                cur.execute(col_sql)
-            except Exception:
-                pass  # すでに存在する場合は無視
+            if USE_SQLITE:
+                try:
+                    cur.execute(col_sql)
+                except Exception:
+                    pass
+            else:
+                cur.execute("SAVEPOINT _mig")
+                try:
+                    cur.execute(col_sql)
+                    cur.execute("RELEASE SAVEPOINT _mig")
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT _mig")
 
 
 # ── OSM データ取得 ────────────────────────────────────────────────────────────
