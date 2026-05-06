@@ -360,6 +360,25 @@ def add_park(body: ParkIn):
     return {"id": new_id}
 
 
+@app.get("/api/parks/search")
+def search_parks(q: str = Query("", min_length=1), limit: int = Query(20, le=50)):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_q("""
+            SELECT p.id, p.lat, p.lon,
+                   COALESCE(p.name,'公園') AS name,
+                   p.park_type,
+                   COUNT(ph.id) AS photo_count,
+                   p.created_at
+            FROM parks p
+            LEFT JOIN park_photos ph ON ph.park_id = p.id
+            WHERE p.name LIKE %s
+            GROUP BY p.id
+            ORDER BY p.name LIMIT %s
+        """), (f"%{q}%", limit))
+        return _fetchall(cur)
+
+
 @app.post("/api/sync")
 def sync_osm():
     threading.Thread(target=fetch_osm_parks, daemon=True).start()

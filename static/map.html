@@ -17,6 +17,7 @@
       <a href="/" class="header-home" aria-label="トップへ">🏠</a>
       <span class="header-icon">🌳</span>
       <h1>公園マップ 東京</h1>
+      <button id="name-search-btn" title="公園名で検索">🔍</button>
     </div>
     <div id="header-right">
       <span id="park-count">読み込み中…</span>
@@ -33,6 +34,15 @@
       </span>
     </div>
   </header>
+
+  <!-- 公園名検索パネル -->
+  <div id="name-search-panel" class="hidden">
+    <div id="name-search-inner">
+      <input type="search" id="name-search-input" placeholder="公園名を入力…" autocomplete="off" />
+      <button id="name-search-close">✕</button>
+    </div>
+    <ul id="name-search-results"></ul>
+  </div>
 
   <div id="map"></div>
 

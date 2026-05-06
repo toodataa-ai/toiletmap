@@ -480,6 +480,60 @@ map.on('click', e => {
   closePanel();
 });
 
+// ── 公園名検索 ────────────────────────────────────────────────────────────────
+let nameSearchTimer = null;
+
+function openNameSearch() {
+  document.getElementById('name-search-panel').classList.remove('hidden');
+  document.getElementById('name-search-input').focus();
+}
+
+function closeNameSearch() {
+  document.getElementById('name-search-panel').classList.add('hidden');
+  document.getElementById('name-search-input').value = '';
+  document.getElementById('name-search-results').innerHTML = '';
+}
+
+async function runNameSearch(q) {
+  const ul = document.getElementById('name-search-results');
+  if (!q.trim()) { ul.innerHTML = ''; return; }
+  try {
+    const results = await fetch(`/api/parks/search?q=${encodeURIComponent(q)}`).then(r => r.json());
+    ul.innerHTML = '';
+    if (results.length === 0) {
+      ul.innerHTML = '<li class="no-result">見つかりませんでした</li>';
+      return;
+    }
+    results.forEach(p => {
+      const li = document.createElement('li');
+      const typeLabel = p.park_type === 'playground' ? '🛝' : '🌳';
+      const photoLabel = p.photo_count > 0 ? ' ★' : '';
+      li.textContent = `${typeLabel} ${p.name}${photoLabel}`;
+      li.addEventListener('click', () => {
+        closeNameSearch();
+        map.setView([p.lat, p.lon], 17);
+        // マーカーがまだなければ追加してパネルを開く
+        if (!loadedIds.has(p.id)) {
+          loadedIds.add(p.id);
+          addMarker(p);
+        }
+        openPanel(p.id);
+      });
+      ul.appendChild(li);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+document.getElementById('name-search-btn').addEventListener('click', openNameSearch);
+document.getElementById('name-search-close').addEventListener('click', closeNameSearch);
+document.getElementById('name-search-input').addEventListener('input', function () {
+  clearTimeout(nameSearchTimer);
+  nameSearchTimer = setTimeout(() => runNameSearch(this.value), 250);
+});
+document.getElementById('name-search-input').addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeNameSearch();
+});
+
 // ── 日付フィルタ ──────────────────────────────────────────────────────────────
 document.getElementById('filter-date').addEventListener('change', function () {
   filterDate = this.value ? new Date(this.value) : null;
