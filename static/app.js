@@ -206,7 +206,6 @@ function renderPanel(p, photos) {
   // 外部リンク
   const name = p.name || '公園';
   document.getElementById('gmap-link').href = gmapUrl(p.lat, p.lon, name);
-  document.getElementById('gmap-photo-link').href = gmapPhotoUrl(p.lat, p.lon, name);
   const kbHref = koentanboUrl(p.osm_id);
   const kbEl = document.getElementById('kb-link');
   if (kbHref) {
