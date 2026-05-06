@@ -120,8 +120,11 @@ function gmapUrl(lat, lon, name) {
   return `https://www.google.com/maps/search/${encodeURIComponent(name)}/@${lat},${lon},17z`;
 }
 function gmapPhotoUrl(lat, lon, name) {
-  // Google マップで写真タブを開く最も確実な方法
   return `https://www.google.com/maps/search/${encodeURIComponent(name + ' 公園')}/@${lat},${lon},17z/data=!5m1!1e4`;
+}
+function koentanboUrl(osmId) {
+  if (!osmId || !osmId.startsWith('koentanbo_')) return null;
+  return `https://www.koentanbo.com/${osmId.slice('koentanbo_'.length)}/`;
 }
 
 // ── 詳細パネル ────────────────────────────────────────────────────────────────
@@ -167,10 +170,18 @@ function renderPanel(p, photos) {
   const meta = [typeLabel, p.operator ? `管理: ${p.operator}` : ''].filter(Boolean).join('　');
   document.getElementById('panel-meta').textContent = meta;
 
-  // Google マップリンク
+  // 外部リンク
   const name = p.name || '公園';
   document.getElementById('gmap-link').href = gmapUrl(p.lat, p.lon, name);
   document.getElementById('gmap-photo-link').href = gmapPhotoUrl(p.lat, p.lon, name);
+  const kbHref = koentanboUrl(p.osm_id);
+  const kbEl = document.getElementById('kb-link');
+  if (kbHref) {
+    kbEl.href = kbHref;
+    kbEl.classList.remove('hidden');
+  } else {
+    kbEl.classList.add('hidden');
+  }
 
   const gallery  = document.getElementById('panel-gallery');
   const noPhotos = document.getElementById('no-photos');
