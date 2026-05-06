@@ -19,11 +19,16 @@
     </div>
     <div id="header-right">
       <span id="park-count">読み込み中…</span>
-      <button id="kb-sync-btn" title="公園探訪郊外から公園データ・写真を取得">🌐</button>
+      <div id="date-filter">
+        <label for="filter-date">新着:</label>
+        <input type="date" id="filter-date" title="この日以降に追加された公園を強調表示" />
+        <button id="filter-clear" class="hidden">✕</button>
+      </div>
       <span id="legend">
+        <span class="dot" style="background:#FF5722"></span>新着
+        <span class="dot" style="background:#FFC107"></span>写真あり
         <span class="dot" style="background:#4CAF50"></span>遊び場
         <span class="dot" style="background:#388E3C"></span>公園
-        <span class="dot" style="background:#FFC107"></span>写真あり
       </span>
     </div>
   </header>

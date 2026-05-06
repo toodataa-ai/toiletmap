@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>公園マップ 管理</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Hiragino Sans', 'Meiryo', sans-serif; background: #F5F5F5; color: #212121; }
+    header {
+      background: #1B5E20; color: #fff;
+      padding: 14px 24px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    header h1 { font-size: 18px; }
+    header a { color: #A5D6A7; font-size: 13px; margin-left: auto; text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+
+    .container { max-width: 640px; margin: 32px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 20px; }
+
+    .card {
+      background: #fff; border-radius: 12px;
+      padding: 20px 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .card h2 { font-size: 15px; font-weight: 700; margin-bottom: 14px; color: #2E7D32; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+    .stat { text-align: center; }
+    .stat-num { font-size: 28px; font-weight: 700; color: #2E7D32; }
+    .stat-label { font-size: 12px; color: #757575; margin-top: 2px; }
+
+    .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .badge {
+      display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
+    }
+    .badge.idle    { background: #E8F5E9; color: #2E7D32; }
+    .badge.running { background: #FFF8E1; color: #F57F17; }
+
+    .progress-wrap { background: #E8F5E9; border-radius: 4px; height: 8px; overflow: hidden; margin: 10px 0; }
+    .progress-fill {
+      height: 100%; background: #4CAF50; border-radius: 4px;
+      transition: width 0.5s ease; width: 0%;
+    }
+    .progress-wrap.indeterminate .progress-fill {
+      width: 40% !important;
+      animation: slide 1.4s ease-in-out infinite;
+    }
+    @keyframes slide { 0% { margin-left:-40%; } 100% { margin-left:110%; } }
+
+    #status-detail { font-size: 13px; color: #555; line-height: 1.6; min-height: 20px; }
+
+    .btn {
+      display: inline-block; padding: 10px 24px; border-radius: 8px; border: none;
+      font-size: 14px; font-weight: 700; cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #2E7D32; color: #fff; }
+    .btn-primary:hover:not(:disabled) { opacity: 0.85; }
+
+    .schedule-info { font-size: 13px; color: #555; line-height: 1.8; }
+    .schedule-info code { background: #E8F5E9; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+<header>
+  <span>🌳</span>
+  <h1>公園マップ 管理</h1>
+  <a href="/map.html">← マップに戻る</a>
+</header>
+
+<div class="container">
+
+  <!-- 統計 -->
+  <div class="card">
+    <h2>📊 現在の統計</h2>
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-num" id="s-parks">…</div><div class="stat-label">公園数</div></div>
+      <div class="stat"><div class="stat-num" id="s-photos">…</div><div class="stat-label">写真数</div></div>
+      <div class="stat"><div class="stat-num" id="s-visits">…</div><div class="stat-label">訪問数</div></div>
+    </div>
+  </div>
+
+  <!-- 同期 -->
+  <div class="card">
+    <h2>🌐 公園探訪郊外 データ同期</h2>
+
+    <div class="status-row">
+      <span>ステータス：</span>
+      <span id="sync-badge" class="badge idle">待機中</span>
+    </div>
+
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <div id="status-detail">—</div>
+
+    <div style="margin-top:16px;">
+      <button id="run-btn" class="btn btn-primary">▶ 今すぐ実行</button>
+    </div>
+  </div>
+
+  <!-- スケジュール情報 -->
+  <div class="card">
+    <h2>⏰ 自動スケジュール</h2>
+    <div class="schedule-info">
+      毎日 <code>02:00 JST</code> に自動で差分同期を実行します。<br>
+      ※ Render 無料プランはスリープ中は実行されません。<br>
+      手動実行は上の「今すぐ実行」ボタンで行えます。
+    </div>
+  </div>
+
+</div>
+
+<script>
+let pollTimer = null;
+let startTime = 0;
+
+async function loadStats() {
+  try {
+    const d = await fetch('/api/stats').then(r => r.json());
+    document.getElementById('s-parks').textContent  = (d.parks  || 0).toLocaleString();
+    document.getElementById('s-photos').textContent = (d.photos || 0).toLocaleString();
+    document.getElementById('s-visits').textContent = (d.visits || 0).toLocaleString();
+  } catch (e) {}
+}
+
+function setIdle(msg = '—') {
+  document.getElementById('sync-badge').className = 'badge idle';
+  document.getElementById('sync-badge').textContent = '待機中';
+  document.getElementById('progress-wrap').classList.remove('indeterminate');
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('status-detail').textContent = msg;
+  document.getElementById('run-btn').disabled = false;
+}
+
+function setRunning() {
+  document.getElementById('sync-badge').className = 'badge running';
+  document.getElementById('sync-badge').textContent = '実行中';
+  document.getElementById('run-btn').disabled = true;
+}
+
+async function pollStatus() {
+  try {
+    const s = await fetch('/api/sync/koentanbo/status').then(r => r.json());
+    const wrap = document.getElementById('progress-wrap');
+    const fill = document.getElementById('progress-fill');
+    const detail = document.getElementById('status-detail');
+
+    if (s.running || s.done > 0) {
+      setRunning();
+      const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
+
+      if (s.total === 0) {
+        wrap.classList.add('indeterminate');
+        detail.textContent = '初期化中…';
+      } else {
+        wrap.classList.remove('indeterminate');
+        fill.style.width = pct + '%';
+        let eta = '';
+        if (s.done > 10) {
+          const elapsed = (Date.now() - startTime) / 1000;
+          const rate = s.done / elapsed;
+          const sec = Math.round((s.total - s.done) / rate);
+          eta = sec > 60 ? `　残り約${Math.round(sec/60)}分` : `　残り約${sec}秒`;
+        }
+        detail.textContent =
+          `${s.done.toLocaleString()} / ${s.total.toLocaleString()} 件処理` +
+          `　登録/更新: ${s.inserted}件` +
+          (s.skipped > 0 ? `　スキップ: ${s.skipped.toLocaleString()}件` : '') +
+          eta;
+      }
+    }
+
+    if (!s.running && s.done > 0) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      setIdle(`完了: ${s.inserted}件 登録/更新、${s.skipped.toLocaleString()}件 スキップ`);
+      loadStats();
+    } else if (!s.running && s.done === 0) {
+      setIdle();
+    }
+  } catch (e) {}
+}
+
+document.getElementById('run-btn').addEventListener('click', async () => {
+  if (!confirm('公園探訪郊外からデータを取得します。\n初回は2〜3分、2回目以降は差分のみです。よろしいですか？')) return;
+  startTime = Date.now();
+  setRunning();
+  document.getElementById('progress-wrap').classList.add('indeterminate');
+  document.getElementById('status-detail').textContent = '開始しています…';
+  try { await fetch('/api/sync/koentanbo', { method: 'POST' }); } catch (e) {}
+  clearInterval(pollTimer);
+  pollTimer = setInterval(pollStatus, 2000);
+});
+
+// 起動時にすでに実行中なら即ポーリング
+(async () => {
+  await loadStats();
+  const s = await fetch('/api/sync/koentanbo/status').then(r => r.json()).catch(() => ({}));
+  if (s.running) {
+    startTime = Date.now();
+    setRunning();
+    pollTimer = setInterval(pollStatus, 2000);
+  }
+})();
+</script>
+</body>
+</html>

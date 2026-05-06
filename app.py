@@ -17,6 +17,7 @@ from typing import Optional
 from xml.etree import ElementTree
 
 import requests as _requests
+from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -159,6 +160,7 @@ def init_db():
         # PostgreSQL は ALTER TABLE 失敗でトランザクションがエラー状態になるため SAVEPOINT を使う
         for col_sql in [
             "ALTER TABLE parks ADD COLUMN last_fetched TIMESTAMP",
+            "ALTER TABLE parks ADD COLUMN created_at TIMESTAMP",
             "ALTER TABLE park_photos ADD COLUMN photo_source TEXT",
         ]:
             if USE_SQLITE:
@@ -227,6 +229,13 @@ def fetch_osm_parks():
 
 # ── 起動時処理 ────────────────────────────────────────────────────────────────
 
+_scheduler = BackgroundScheduler(timezone="Asia/Tokyo")
+
+def _scheduled_sync():
+    if not _kb_status["running"]:
+        print("[scheduler] 定期同期開始")
+        threading.Thread(target=fetch_koentanbo_parks, daemon=True).start()
+
 @app.on_event("startup")
 def startup():
     db_type = "SQLite" if USE_SQLITE else "PostgreSQL"
@@ -237,6 +246,9 @@ def startup():
         cur.execute("SELECT COUNT(*) FROM parks")
         count = cur.fetchone()[0]
     print(f"[DB] 公園 {count} 件が登録済みです")
+    _scheduler.add_job(_scheduled_sync, 'cron', hour=2, minute=0, id='koentanbo_daily')
+    _scheduler.start()
+    print("[scheduler] 起動完了 — 毎日 02:00 JST に自動同期")
 
 
 # ── モデル ────────────────────────────────────────────────────────────────────
@@ -269,7 +281,8 @@ def list_parks(
                 SELECT p.id, p.lat, p.lon,
                        COALESCE(p.name,'公園') AS name,
                        p.park_type,
-                       COUNT(ph.id) AS photo_count
+                       COUNT(ph.id) AS photo_count,
+                       p.created_at
                 FROM parks p
                 LEFT JOIN park_photos ph ON ph.park_id = p.id
                 WHERE p.lat BETWEEN %s AND %s AND p.lon BETWEEN %s AND %s
@@ -280,7 +293,8 @@ def list_parks(
                 SELECT p.id, p.lat, p.lon,
                        COALESCE(p.name,'公園') AS name,
                        p.park_type,
-                       COUNT(ph.id) AS photo_count
+                       COUNT(ph.id) AS photo_count,
+                       p.created_at
                 FROM parks p
                 LEFT JOIN park_photos ph ON ph.park_id = p.id
                 GROUP BY p.id LIMIT %s
@@ -445,8 +459,8 @@ def _process_koentanbo_url(url: str, is_update: bool = False) -> bool:
                         )
             else:
                 cur.execute(
-                    _q(f"""INSERT INTO parks (osm_id, lat, lon, name, park_type, source, last_fetched)
-                          VALUES (%s,%s,%s,%s,'park','koentanbo',{now})
+                    _q(f"""INSERT INTO parks (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
+                          VALUES (%s,%s,%s,%s,'park','koentanbo',{now},{now})
                           ON CONFLICT (osm_id) DO NOTHING"""),
                     (osm_id, lat, lon, data["name"] or "公園"),
                 )

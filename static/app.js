@@ -21,12 +21,13 @@ const clusterGroup = L.markerClusterGroup({
 map.addLayer(clusterGroup);
 
 // ── 状態 ─────────────────────────────────────────────────────────────────────
-let markers    = new Map();
-let loadedIds  = new Set();
-let currentId  = null;
-let addMode    = false;
-let addLatLng  = null;
+let markers      = new Map();
+let loadedIds    = new Set();
+let currentId    = null;
+let addMode      = false;
+let addLatLng    = null;
 let selectedType = 'playground';
+let filterDate   = null;  // Date | null — この日以降の公園を新着色で表示
 
 // ── ユーティリティ ────────────────────────────────────────────────────────────
 function escHtml(str) {
@@ -34,10 +35,11 @@ function escHtml(str) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function markerColor(parkType, photoCount) {
-  if (photoCount > 0)       return '#FFC107';  // 写真あり → 黄
-  if (parkType === 'park')  return '#388E3C';  // 公園 → 濃緑
-  return '#4CAF50';                            // 遊び場 → 緑
+function markerColor(parkType, photoCount, createdAt) {
+  if (filterDate && createdAt && new Date(createdAt) >= filterDate) return '#FF5722'; // 新着
+  if (photoCount > 0)      return '#FFC107';  // 写真あり → 黄
+  if (parkType === 'park') return '#388E3C';  // 公園 → 濃緑
+  return '#4CAF50';                           // 遊び場 → 緑
 }
 
 // ── マーカー作成 ──────────────────────────────────────────────────────────────
@@ -51,17 +53,24 @@ function makeIcon(color) {
 function addMarker(p) {
   if (markers.has(p.id)) return;
   const marker = L.marker([p.lat, p.lon], {
-    icon: makeIcon(markerColor(p.park_type, p.photo_count)),
+    icon: makeIcon(markerColor(p.park_type, p.photo_count, p.created_at)),
   });
   marker.on('click', () => openPanel(p.id));
   clusterGroup.addLayer(marker);
   markers.set(p.id, { marker, data: p });
 }
 
-function updateMarkerColor(id, parkType, photoCount) {
+function updateMarkerColor(id, parkType, photoCount, createdAt) {
   const entry = markers.get(id);
   if (!entry) return;
-  entry.marker.setIcon(makeIcon(markerColor(parkType, photoCount)));
+  entry.marker.setIcon(makeIcon(markerColor(parkType, photoCount, createdAt)));
+}
+
+function recolorAllMarkers() {
+  markers.forEach((entry) => {
+    const p = entry.data;
+    entry.marker.setIcon(makeIcon(markerColor(p.park_type, p.photo_count, p.created_at)));
+  });
 }
 
 // ── ビューポート読み込み ──────────────────────────────────────────────────────
@@ -153,7 +162,7 @@ async function openPanel(id) {
         // パネルを更新
         const updated = await fetch(`/api/parks/${id}`).then(r => r.json());
         renderPanel(updated, updated.photos || []);
-        updateMarkerColor(id, updated.park_type, updated.photo_count);
+        updateMarkerColor(id, updated.park_type, updated.photo_count, updated.created_at);
         if (markers.has(id)) markers.get(id).data = updated;
       } else {
         document.getElementById('no-photos').classList.remove('hidden');
@@ -299,7 +308,7 @@ document.getElementById('photo-form').addEventListener('submit', async e => {
     // パネル更新
     const detail = await fetch(`/api/parks/${currentId}`).then(r => r.json());
     renderPanel(detail, detail.photos || []);
-    updateMarkerColor(currentId, detail.park_type, detail.photo_count);
+    updateMarkerColor(currentId, detail.park_type, detail.photo_count, detail.created_at);
     if (markers.has(currentId)) markers.get(currentId).data = detail;
   } catch (err) {
     errEl.textContent = `送信失敗: ${err.message}`;
@@ -448,6 +457,19 @@ map.on('click', e => {
   closePanel();
 });
 
+// ── 日付フィルタ ──────────────────────────────────────────────────────────────
+document.getElementById('filter-date').addEventListener('change', function () {
+  filterDate = this.value ? new Date(this.value) : null;
+  document.getElementById('filter-clear').classList.toggle('hidden', !this.value);
+  recolorAllMarkers();
+});
+document.getElementById('filter-clear').addEventListener('click', function () {
+  document.getElementById('filter-date').value = '';
+  filterDate = null;
+  this.classList.add('hidden');
+  recolorAllMarkers();
+});
+
 // ── 進捗UI ───────────────────────────────────────────────────────────────────
 const progressBar  = document.getElementById('progress-bar');
 const syncCard     = document.getElementById('sync-card');
@@ -483,70 +505,12 @@ function reloadMarkers() {
 }
 
 
-// ── 公園探訪郊外 同期 ─────────────────────────────────────────────────────────
-let kbPollTimer = null;
-let kbStartTime = 0;
-
-async function startKoentanboSync() {
-  const btn = document.getElementById('kb-sync-btn');
-  btn.disabled = true;
-  btn.textContent = '⏳';
-  kbStartTime = Date.now();
-  showSyncCard('🌐 公園探訪郊外からデータ取得中…', 0, '開始しています…', true);
-
-  try { await fetch('/api/sync/koentanbo', { method: 'POST' }); } catch (e) { /* ignore */ }
-
-  clearInterval(kbPollTimer);
-  kbPollTimer = setInterval(async () => {
-    try {
-      const s = await fetch('/api/sync/koentanbo/status').then(r => r.json());
-      const pct = s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
-
-      let etaText = '';
-      if (s.done > 10 && s.total > 0) {
-        const elapsed = (Date.now() - kbStartTime) / 1000;
-        const rate    = s.done / elapsed;
-        const eta     = Math.round((s.total - s.done) / rate);
-        etaText = eta > 60
-          ? `　残り約${Math.round(eta / 60)}分`
-          : `　残り約${eta}秒`;
-      }
-
-      const detail = s.total === 0 && s.skipped > 0
-        ? `全件登録済み・更新なし (スキップ: ${s.skipped.toLocaleString()}件)`
-        : `${s.done.toLocaleString()} / ${s.total.toLocaleString()} 件処理`
-          + `　登録/更新: ${s.inserted}件`
-          + (s.skipped > 0 ? `　スキップ: ${s.skipped.toLocaleString()}件` : '')
-          + etaText;
-
-      document.getElementById('park-count').textContent =
-        s.total > 0 ? `${s.done.toLocaleString()}/${s.total.toLocaleString()} 件` : '完了';
-
-      showSyncCard('🌐 公園探訪郊外からデータ取得中…', pct, detail, s.total === 0);
-
-      if (!s.running) {
-        clearInterval(kbPollTimer);
-        btn.disabled = false;
-        btn.textContent = '🌐';
-        hideSyncCard();
-        reloadMarkers();
-      }
-    } catch (e) { /* ignore */ }
-  }, 3000);
-}
-
-document.getElementById('kb-sync-btn').addEventListener('click', () => {
-  if (confirm('公園探訪郊外（koentanbo.com）から公園データ・写真を取得します。\n初回は2〜3分、2回目以降は差分のみなので数秒〜数十秒で完了します。')) {
-    startKoentanboSync();
-  }
-});
-
-// 起動時にDBが空なら🌐ボタンへ誘導
+// 起動時にDBが空なら管理画面へ誘導
 fetch('/api/stats').then(r => r.json()).then(d => {
   if (d.parks === 0) {
     document.getElementById('park-count').textContent = '公園データなし';
     showSyncCard('公園データがありません', 0,
-      '🌐 ボタンを押して公園探訪郊外からデータを取得してください', false);
+      '管理画面（/admin.html）からデータを取得してください', false);
   }
 }).catch(() => {});
 
