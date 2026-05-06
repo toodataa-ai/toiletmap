@@ -50,12 +50,6 @@ function escHtml(str) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function markerColor(parkType, photoCount, createdAt) {
-  if (filterDate && createdAt && new Date(createdAt) >= filterDate) return '#FF5722'; // 新着
-  if (photoCount > 0)      return '#FFC107';  // 写真あり → 黄
-  if (parkType === 'park') return '#388E3C';  // 公園 → 濃緑
-  return '#4CAF50';                           // 遊び場 → 緑
-}
 
 // ── マーカー作成 ──────────────────────────────────────────────────────────────
 function makeIcon(color) {
@@ -65,10 +59,25 @@ function makeIcon(color) {
   return L.divIcon({ html: svg, className: '', iconSize: [20, 20], iconAnchor: [10, 10] });
 }
 
+function makeStarIcon(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+    <polygon points="12,2 14.9,8.6 22,9.5 17,14.4 18.5,21.5 12,18 5.5,21.5 7,14.4 2,9.5 9.1,8.6"
+             fill="${color}" stroke="white" stroke-width="1.5"/>
+  </svg>`;
+  return L.divIcon({ html: svg, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
+}
+
+function markerIcon(parkType, photoCount, createdAt) {
+  if (filterDate && createdAt && new Date(createdAt) >= filterDate) return makeIcon('#FF5722');
+  if (photoCount > 0)      return makeStarIcon('#1976D2');
+  if (parkType === 'park') return makeIcon('#388E3C');
+  return makeIcon('#4CAF50');
+}
+
 function addMarker(p) {
   if (markers.has(p.id)) return;
   const marker = L.marker([p.lat, p.lon], {
-    icon: makeIcon(markerColor(p.park_type, p.photo_count, p.created_at)),
+    icon: markerIcon(p.park_type, p.photo_count, p.created_at),
   });
   marker.on('click', () => openPanel(p.id));
   clusterGroup.addLayer(marker);
@@ -78,13 +87,13 @@ function addMarker(p) {
 function updateMarkerColor(id, parkType, photoCount, createdAt) {
   const entry = markers.get(id);
   if (!entry) return;
-  entry.marker.setIcon(makeIcon(markerColor(parkType, photoCount, createdAt)));
+  entry.marker.setIcon(markerIcon(parkType, photoCount, createdAt));
 }
 
 function recolorAllMarkers() {
   markers.forEach((entry) => {
     const p = entry.data;
-    entry.marker.setIcon(makeIcon(markerColor(p.park_type, p.photo_count, p.created_at)));
+    entry.marker.setIcon(markerIcon(p.park_type, p.photo_count, p.created_at));
   });
 }
 

@@ -124,6 +124,11 @@ html, body { height: 100%; font-family: var(--font); color: var(--color-text); }
   display: inline-block; width: 10px; height: 10px;
   border-radius: 50%; margin-left: 6px;
 }
+.legend-star {
+  display: inline-block; font-size: 13px;
+  margin-left: 6px; line-height: 1;
+  vertical-align: middle;
+}
 
 /* ── 場所検索 ────────────────────────────────────────── */
 .leaflet-control-geocoder {
