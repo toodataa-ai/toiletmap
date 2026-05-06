@@ -12,6 +12,21 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+// ── 場所検索（Nominatim） ─────────────────────────────────────────────────────
+L.Control.geocoder({
+  position: 'topleft',
+  defaultMarkGeocode: false,
+  placeholder: '場所を検索…',
+  errorMessage: '見つかりませんでした',
+  geocoder: L.Control.Geocoder.nominatim({
+    geocodingQueryParams: { countrycodes: 'jp', limit: 5 },
+  }),
+})
+.on('markgeocode', e => {
+  map.fitBounds(e.geocode.bbox);
+})
+.addTo(map);
+
 const clusterGroup = L.markerClusterGroup({
   maxClusterRadius: 50,
   showCoverageOnHover: false,

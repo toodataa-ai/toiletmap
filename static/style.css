@@ -125,6 +125,21 @@ html, body { height: 100%; font-family: var(--font); color: var(--color-text); }
   border-radius: 50%; margin-left: 6px;
 }
 
+/* ── 場所検索 ────────────────────────────────────────── */
+.leaflet-control-geocoder {
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18) !important;
+}
+.leaflet-control-geocoder-form input {
+  font-family: var(--font);
+  font-size: 14px;
+  width: 200px;
+}
+.leaflet-control-geocoder-alternatives {
+  font-family: var(--font);
+  font-size: 13px;
+}
+
 /* ── 地図 ────────────────────────────────────────────── */
 #map {
   position: fixed;
