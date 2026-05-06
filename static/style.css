@@ -456,6 +456,13 @@ body.top-page {
 }
 .top-btn:hover { background: var(--color-primary-dark); transform: translateY(-1px); }
 
+.top-admin-link {
+  display: block; text-align: center; margin-top: 12px;
+  font-size: 13px; color: var(--color-sub); text-decoration: none;
+  transition: color 0.15s;
+}
+.top-admin-link:hover { color: var(--color-primary); }
+
 .header-home {
   font-size: 18px; text-decoration: none; line-height: 1;
   opacity: 0.85; transition: opacity 0.15s;
