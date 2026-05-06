@@ -482,44 +482,6 @@ function reloadMarkers() {
   loadViewport();
 }
 
-// ── OSM 同期 ─────────────────────────────────────────────────────────────────
-let syncPollTimer = null;
-
-async function startSync() {
-  const btn = document.getElementById('sync-btn');
-  btn.disabled = true;
-  btn.textContent = '⏳';
-  showSyncCard('🔄 OSMから公園データを取得中…', 0, '開始しています…', true);
-
-  try { await fetch('/api/sync', { method: 'POST' }); } catch (e) { /* ignore */ }
-
-  let prev = 0;
-  let tries = 0;
-  clearInterval(syncPollTimer);
-  syncPollTimer = setInterval(async () => {
-    tries++;
-    try {
-      const d = await fetch('/api/stats').then(r => r.json());
-      document.getElementById('park-count').textContent = `${d.parks.toLocaleString()} 件`;
-      showSyncCard('🔄 OSMから公園データを取得中…', 0,
-        `取得済み: ${d.parks.toLocaleString()} 件`, true);
-      if (d.parks > prev || tries > 60) {
-        clearInterval(syncPollTimer);
-        btn.disabled = false;
-        btn.textContent = '🔄';
-        hideSyncCard();
-        reloadMarkers();
-      }
-      prev = d.parks;
-    } catch (e) { /* ignore */ }
-  }, 5000);
-}
-
-document.getElementById('sync-btn').addEventListener('click', () => {
-  if (confirm('OSM（OpenStreetMap）から東京の公園データを取得します。\n数分かかります。よろしいですか？')) {
-    startSync();
-  }
-});
 
 // ── 公園探訪郊外 同期 ─────────────────────────────────────────────────────────
 let kbPollTimer = null;
@@ -579,25 +541,12 @@ document.getElementById('kb-sync-btn').addEventListener('click', () => {
   }
 });
 
-// 起動時にDBが空ならば自動でポーリング開始（初回起動時の同期を監視）
+// 起動時にDBが空なら🌐ボタンへ誘導
 fetch('/api/stats').then(r => r.json()).then(d => {
   if (d.parks === 0) {
-    showSyncCard('🔄 公園データを初回取得中…', 0, '開始しています…', true);
-    let tries = 0;
-    const t = setInterval(async () => {
-      tries++;
-      try {
-        const d2 = await fetch('/api/stats').then(r => r.json());
-        document.getElementById('park-count').textContent = `取得中… ${d2.parks.toLocaleString()} 件`;
-        showSyncCard('🔄 公園データを初回取得中…', 0,
-          `取得済み: ${d2.parks.toLocaleString()} 件`, true);
-        if (d2.parks > 0 || tries > 60) {
-          clearInterval(t);
-          hideSyncCard();
-          reloadMarkers();
-        }
-      } catch (e) { /* ignore */ }
-    }, 5000);
+    document.getElementById('park-count').textContent = '公園データなし';
+    showSyncCard('公園データがありません', 0,
+      '🌐 ボタンを押して公園探訪郊外からデータを取得してください', false);
   }
 }).catch(() => {});
 

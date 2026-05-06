@@ -236,11 +236,7 @@ def startup():
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM parks")
         count = cur.fetchone()[0]
-    if count == 0:
-        print("[OSM] 公園データを初回取得中（バックグラウンド）...")
-        threading.Thread(target=fetch_osm_parks, daemon=True).start()
-    else:
-        print(f"[DB] 公園 {count} 件が登録済みです")
+    print(f"[DB] 公園 {count} 件が登録済みです")
 
 
 # ── モデル ────────────────────────────────────────────────────────────────────
