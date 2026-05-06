@@ -180,7 +180,7 @@ def init_db():
 def fetch_osm_parks():
     s, w, n, e = TOKYO_BBOX
     query = f"""
-    [out:json][timeout:60][maxsize:50000000];
+    [out:json][timeout:90];
     (
       node["leisure"="playground"]({s},{w},{n},{e});
       way["leisure"="playground"]({s},{w},{n},{e});
@@ -190,14 +190,14 @@ def fetch_osm_parks():
     out center tags;
     """
     try:
-        result = subprocess.run(
-            ['curl', '-s', '-m', '90', '-X', 'POST', OVERPASS_URL,
-             '--data-urlencode', f'data={query}'],
-            capture_output=True,
+        resp = _requests.post(
+            OVERPASS_URL,
+            data={"data": query},
+            timeout=120,
+            headers={"User-Agent": KOENTANBO_UA},
         )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.decode('utf-8', errors='replace'))
-        elements = _json.loads(result.stdout.decode('utf-8')).get("elements", [])
+        resp.raise_for_status()
+        elements = resp.json().get("elements", [])
 
         inserted = 0
         with get_db() as conn:
