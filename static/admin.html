@@ -101,6 +101,25 @@
     </div>
   </div>
 
+  <!-- 新宿区公式 同期 -->
+  <div class="card">
+    <h2>🏙️ 新宿区公式 水遊び場 データ取得</h2>
+
+    <div class="status-row">
+      <span>ステータス：</span>
+      <span id="sj-badge" class="badge idle">待機中</span>
+    </div>
+
+    <div class="progress-wrap" id="sj-progress-wrap">
+      <div class="progress-fill" id="sj-progress-fill"></div>
+    </div>
+    <div id="sj-status-detail">—</div>
+
+    <div style="margin-top:16px;">
+      <button id="sj-run-btn" class="btn btn-primary">▶ 今すぐ取得</button>
+    </div>
+  </div>
+
   <!-- スケジュール情報 -->
   <div class="card">
     <h2>⏰ 自動スケジュール</h2>
@@ -203,6 +222,75 @@ document.getElementById('run-btn').addEventListener('click', async () => {
     startTime = Date.now();
     setRunning();
     pollTimer = setInterval(pollStatus, 2000);
+  }
+})();
+
+// ── 新宿区 ────────────────────────────────────────────────────────────────────
+let sjPollTimer = null;
+let sjStartTime = 0;
+
+function sjSetIdle(msg = '—') {
+  document.getElementById('sj-badge').className = 'badge idle';
+  document.getElementById('sj-badge').textContent = '待機中';
+  document.getElementById('sj-progress-wrap').classList.remove('indeterminate');
+  document.getElementById('sj-progress-fill').style.width = '0%';
+  document.getElementById('sj-status-detail').textContent = msg;
+  document.getElementById('sj-run-btn').disabled = false;
+}
+
+function sjSetRunning() {
+  document.getElementById('sj-badge').className = 'badge running';
+  document.getElementById('sj-badge').textContent = '実行中';
+  document.getElementById('sj-run-btn').disabled = true;
+}
+
+async function sjPollStatus() {
+  try {
+    const s = await fetch('/api/sync/shinjuku/status').then(r => r.json());
+    const wrap   = document.getElementById('sj-progress-wrap');
+    const fill   = document.getElementById('sj-progress-fill');
+    const detail = document.getElementById('sj-status-detail');
+
+    if (s.running || s.done > 0) {
+      sjSetRunning();
+      if (s.total === 0) {
+        wrap.classList.add('indeterminate');
+        detail.textContent = '初期化中…';
+      } else {
+        wrap.classList.remove('indeterminate');
+        fill.style.width = Math.round(s.done / s.total * 100) + '%';
+        detail.textContent = `${s.done} / ${s.total} 件処理　登録: ${s.inserted}件`;
+      }
+    }
+
+    if (!s.running && s.done > 0) {
+      clearInterval(sjPollTimer);
+      sjPollTimer = null;
+      sjSetIdle(`完了: ${s.inserted}件 登録`);
+      loadStats();
+    } else if (!s.running && s.done === 0) {
+      sjSetIdle();
+    }
+  } catch (e) {}
+}
+
+document.getElementById('sj-run-btn').addEventListener('click', async () => {
+  if (!confirm('新宿区公式サイトから水遊び場データを取得します（約25件、30秒程度）。よろしいですか？')) return;
+  sjStartTime = Date.now();
+  sjSetRunning();
+  document.getElementById('sj-progress-wrap').classList.add('indeterminate');
+  document.getElementById('sj-status-detail').textContent = '開始しています…';
+  try { await fetch('/api/sync/shinjuku', { method: 'POST' }); } catch (e) {}
+  clearInterval(sjPollTimer);
+  sjPollTimer = setInterval(sjPollStatus, 2000);
+});
+
+(async () => {
+  const s = await fetch('/api/sync/shinjuku/status').then(r => r.json()).catch(() => ({}));
+  if (s.running) {
+    sjStartTime = Date.now();
+    sjSetRunning();
+    sjPollTimer = setInterval(sjPollStatus, 2000);
   }
 })();
 </script>
