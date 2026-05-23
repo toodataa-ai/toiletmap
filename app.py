@@ -41,6 +41,7 @@ KOENTANBO_BASE     = "https://www.koentanbo.com"
 KOENTANBO_UA       = "parkmap-bot/1.0"
 SHINJUKU_BASE      = "https://www.city.shinjuku.lg.jp"
 SHINJUKU_URL       = f"{SHINJUKU_BASE}/seikatsu/file15_03_00020.html"
+SUGINAMI_URL       = "https://www.city.suginami.tokyo.jp/s100/1621.html"
 KOENTANBO_SITEMAPS = [
     f"{KOENTANBO_BASE}/post-sitemap.xml",
     f"{KOENTANBO_BASE}/post-sitemap2.xml",
@@ -52,6 +53,7 @@ KANTO_BBOX = (34.5, 138.5, 37.0, 141.5)
 
 _kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "skipped": 0}
 _sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
+_sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -597,9 +599,9 @@ def koentanbo_status():
 
 # ── 新宿区公式 水遊び場 スクレイピング ──────────────────────────────────────────
 
-def _geocode_park(name: str, address: str) -> tuple | None:
+def _geocode_park(name: str, address: str = "") -> tuple | None:
     """Nominatim で公園→(lat, lon) 変換。公園名優先、失敗時は住所でリトライ。"""
-    queries = [name, f"東京都新宿区{address}"] if address else [name]
+    queries = [name, address] if address else [name]
     for q in queries:
         try:
             resp = _requests.get(
@@ -689,7 +691,7 @@ def fetch_shinjuku_parks():
             if existing:
                 park_id, lat, lon = existing[0], existing[1], existing[2]
             else:
-                coords = _geocode_park(name, address)
+                coords = _geocode_park(name, f"東京都新宿区{address}" if address else "")
                 if not coords:
                     print(f"[shinjuku] geocode 失敗: {name} ({address})")
                     _sj_status["done"] += 1
@@ -756,6 +758,94 @@ def sync_shinjuku():
 @app.get("/api/sync/shinjuku/status")
 def shinjuku_status():
     return _sj_status
+
+
+# ── 杉並区公式 水遊び場 スクレイピング ──────────────────────────────────────────
+
+def fetch_suginami_parks():
+    global _sg_status
+    _sg_status = {"running": True, "total": 0, "done": 0, "inserted": 0}
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(SUGINAMI_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        parks_data = []
+        for tr in soup.find_all("tr"):
+            cells = tr.find_all(["th", "td"])
+            if len(cells) < 3:
+                continue
+            facilities = cells[2].get_text(strip=True)
+            if "流れ" not in facilities:
+                continue
+            name    = cells[0].get_text(strip=True)
+            address = cells[1].get_text(strip=True)
+            if not name:
+                continue
+            parks_data.append({"name": name, "address": address})
+
+        _sg_status["total"] = len(parks_data)
+        print(f"[suginami] {len(parks_data)} 件発見（流れあり）")
+
+        now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+        for park in parks_data:
+            name    = park["name"]
+            address = park["address"]
+            slug    = re.sub(r"[\s/\\]", "_", name)
+            osm_id  = f"suginami_{slug}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                if cur.fetchone():
+                    _sg_status["done"] += 1
+                    continue
+
+            coords = _geocode_park(name, f"東京都{address}" if address else "")
+            if not coords:
+                print(f"[suginami] geocode 失敗: {name} ({address})")
+                _sg_status["done"] += 1
+                continue
+            lat, lon = coords
+
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        _q(f"""INSERT INTO parks
+                               (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','suginami',{now_expr},{now_expr})
+                               ON CONFLICT (osm_id) DO NOTHING"""),
+                        (osm_id, lat, lon, name),
+                    )
+                    if cur.rowcount:
+                        _sg_status["inserted"] += 1
+                        print(f"[suginami] 登録: {name} ({lat:.5f},{lon:.5f})")
+            except Exception as exc:
+                print(f"[suginami] db error {name}: {exc}")
+
+            _sg_status["done"] += 1
+
+    except Exception as exc:
+        print(f"[suginami] fetch error: {exc}")
+    finally:
+        _sg_status["running"] = False
+        print(f"[suginami] 完了: {_sg_status['inserted']} 件登録")
+
+
+@app.post("/api/sync/suginami")
+def sync_suginami():
+    if _sg_status["running"]:
+        return {"status": "already_running", **_sg_status}
+    threading.Thread(target=fetch_suginami_parks, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/suginami/status")
+def suginami_status():
+    return _sg_status
 
 
 @app.post("/api/visit", status_code=201)

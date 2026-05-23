@@ -120,6 +120,25 @@
     </div>
   </div>
 
+  <!-- 杉並区公式 同期 -->
+  <div class="card">
+    <h2>🏙️ 杉並区公式 水遊び場 データ取得</h2>
+
+    <div class="status-row">
+      <span>ステータス：</span>
+      <span id="sg-badge" class="badge idle">待機中</span>
+    </div>
+
+    <div class="progress-wrap" id="sg-progress-wrap">
+      <div class="progress-fill" id="sg-progress-fill"></div>
+    </div>
+    <div id="sg-status-detail">—</div>
+
+    <div style="margin-top:16px;">
+      <button id="sg-run-btn" class="btn btn-primary">▶ 今すぐ取得</button>
+    </div>
+  </div>
+
   <!-- スケジュール情報 -->
   <div class="card">
     <h2>⏰ 自動スケジュール</h2>
@@ -291,6 +310,72 @@ document.getElementById('sj-run-btn').addEventListener('click', async () => {
     sjStartTime = Date.now();
     sjSetRunning();
     sjPollTimer = setInterval(sjPollStatus, 2000);
+  }
+})();
+
+// ── 杉並区 ────────────────────────────────────────────────────────────────────
+let sgPollTimer = null;
+
+function sgSetIdle(msg = '—') {
+  document.getElementById('sg-badge').className = 'badge idle';
+  document.getElementById('sg-badge').textContent = '待機中';
+  document.getElementById('sg-progress-wrap').classList.remove('indeterminate');
+  document.getElementById('sg-progress-fill').style.width = '0%';
+  document.getElementById('sg-status-detail').textContent = msg;
+  document.getElementById('sg-run-btn').disabled = false;
+}
+
+function sgSetRunning() {
+  document.getElementById('sg-badge').className = 'badge running';
+  document.getElementById('sg-badge').textContent = '実行中';
+  document.getElementById('sg-run-btn').disabled = true;
+}
+
+async function sgPollStatus() {
+  try {
+    const s = await fetch('/api/sync/suginami/status').then(r => r.json());
+    const wrap   = document.getElementById('sg-progress-wrap');
+    const fill   = document.getElementById('sg-progress-fill');
+    const detail = document.getElementById('sg-status-detail');
+
+    if (s.running || s.done > 0) {
+      sgSetRunning();
+      if (s.total === 0) {
+        wrap.classList.add('indeterminate');
+        detail.textContent = '初期化中…';
+      } else {
+        wrap.classList.remove('indeterminate');
+        fill.style.width = Math.round(s.done / s.total * 100) + '%';
+        detail.textContent = `${s.done} / ${s.total} 件処理　登録: ${s.inserted}件`;
+      }
+    }
+
+    if (!s.running && s.done > 0) {
+      clearInterval(sgPollTimer);
+      sgPollTimer = null;
+      sgSetIdle(`完了: ${s.inserted}件 登録`);
+      loadStats();
+    } else if (!s.running && s.done === 0) {
+      sgSetIdle();
+    }
+  } catch (e) {}
+}
+
+document.getElementById('sg-run-btn').addEventListener('click', async () => {
+  if (!confirm('杉並区公式サイトから流れのある公園データを取得します（約36件、1分程度）。よろしいですか？')) return;
+  sgSetRunning();
+  document.getElementById('sg-progress-wrap').classList.add('indeterminate');
+  document.getElementById('sg-status-detail').textContent = '開始しています…';
+  try { await fetch('/api/sync/suginami', { method: 'POST' }); } catch (e) {}
+  clearInterval(sgPollTimer);
+  sgPollTimer = setInterval(sgPollStatus, 2000);
+});
+
+(async () => {
+  const s = await fetch('/api/sync/suginami/status').then(r => r.json()).catch(() => ({}));
+  if (s.running) {
+    sgSetRunning();
+    sgPollTimer = setInterval(sgPollStatus, 2000);
   }
 })();
 </script>
