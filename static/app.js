@@ -221,7 +221,11 @@ function renderPanel(p, photos) {
       descEl.textContent = '💧 流れのある公園です\n' + period + '　時間：9:30〜16:30';
       descEl.classList.remove('hidden');
     } else if (p.source === 'shinjuku') {
-      descEl.textContent = '🌊 水遊びができる公園です';
+      let text = '🌊 水遊びができる公園です';
+      if (p.description) {
+        text += '\n' + p.description.split('\n').map(l => '・' + l).join('\n');
+      }
+      descEl.textContent = text;
       descEl.classList.remove('hidden');
     } else {
       descEl.classList.add('hidden');

@@ -167,6 +167,7 @@ def init_db():
             "ALTER TABLE parks ADD COLUMN last_fetched TIMESTAMP",
             "ALTER TABLE parks ADD COLUMN created_at TIMESTAMP",
             "ALTER TABLE park_photos ADD COLUMN photo_source TEXT",
+            "ALTER TABLE parks ADD COLUMN description TEXT",
         ]:
             if USE_SQLITE:
                 try:
@@ -316,7 +317,7 @@ def get_park(park_id: int):
         cur.execute(_q("""
             SELECT p.id, p.osm_id, p.lat, p.lon,
                    COALESCE(p.name,'公園') AS name,
-                   p.operator, p.park_type, p.source,
+                   p.operator, p.park_type, p.source, p.description,
                    COUNT(ph.id) AS photo_count
             FROM parks p
             LEFT JOIN park_photos ph ON ph.park_id = p.id
@@ -721,10 +722,22 @@ def fetch_shinjuku_parks():
             href = a["href"]
             if href in seen_links:
                 continue
-            name    = a.get_text(strip=True)
-            address = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            name     = a.get_text(strip=True)
+            address  = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            facility = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+            period   = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+            hours    = cells[4].get_text(strip=True) if len(cells) > 4 else ""
+            water    = cells[5].get_text(strip=True) if len(cells) > 5 else ""
+            disinfect= cells[6].get_text(strip=True) if len(cells) > 6 else ""
+            desc_parts = []
+            if facility:   desc_parts.append(f"施設: {facility}")
+            if period:     desc_parts.append(f"時期: {period}")
+            if hours:      desc_parts.append(f"時間: {hours}")
+            if water:      desc_parts.append(f"補給水: {water}")
+            if disinfect:  desc_parts.append(f"消毒: {disinfect}")
             seen_links.add(href)
-            parks_data.append({"name": name, "href": href, "address": address})
+            parks_data.append({"name": name, "href": href, "address": address,
+                               "description": "\n".join(desc_parts)})
 
         # 今回取得した osm_id 一覧（削除判定用）
         current_osm_ids = {
@@ -760,6 +773,7 @@ def fetch_shinjuku_parks():
                 lat, lon = coords
                 park_id = None
 
+            description = park.get("description", "")
             detail_url = (SHINJUKU_BASE + href) if href.startswith("/") else href
             photos = _parse_shinjuku_park_detail(detail_url)
 
@@ -769,10 +783,10 @@ def fetch_shinjuku_parks():
                     if park_id is None:
                         cur.execute(
                             _q(f"""INSERT INTO parks
-                                   (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
-                                   VALUES (%s,%s,%s,%s,'park','shinjuku',{now_expr},{now_expr})
+                                   (osm_id, lat, lon, name, park_type, source, description, last_fetched, created_at)
+                                   VALUES (%s,%s,%s,%s,'park','shinjuku',%s,{now_expr},{now_expr})
                                    ON CONFLICT (osm_id) DO NOTHING"""),
-                            (osm_id, lat, lon, name),
+                            (osm_id, lat, lon, name, description),
                         )
                         if USE_SQLITE:
                             park_id = cur.lastrowid
@@ -782,7 +796,8 @@ def fetch_shinjuku_parks():
                         _sj_status["inserted"] += 1
                         print(f"[shinjuku] 登録: {name} ({lat:.5f},{lon:.5f}) 写真{len(photos)}枚")
                     else:
-                        print(f"[shinjuku] 写真更新: {name} 写真{len(photos)}枚")
+                        cur.execute(_q("UPDATE parks SET description=%s WHERE id=%s"), (description, park_id))
+                        print(f"[shinjuku] 更新: {name} 写真{len(photos)}枚")
 
                     # 写真を差し替え（ロゴ混入修正のため毎回更新）
                     cur.execute(
