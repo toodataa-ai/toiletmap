@@ -70,7 +70,7 @@ function makeStarIcon(color) {
 function markerIcon(parkType, photoCount, createdAt, source) {
   if (filterDate && createdAt && new Date(createdAt) >= filterDate) return makeIcon('#FF5722');
   if (source === 'shinjuku') return makeStarIcon('#00BCD4');
-  if (photoCount > 0)        return makeStarIcon('#1976D2');
+  if (photoCount > 0)        return makeStarIcon('#E53935');
   if (parkType === 'park')   return makeIcon('#388E3C');
   return makeIcon('#4CAF50');
 }
