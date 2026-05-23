@@ -619,17 +619,19 @@ def _geocode_park(name: str, address: str) -> tuple | None:
 
 
 def _parse_shinjuku_park_detail(url: str) -> list:
-    """詳細ページから写真URL リストを返す（最大5件）。"""
+    """詳細ページから公園写真URLリストを返す（.jpgのみ、最大5件）。"""
     photos = []
     try:
         r = _requests.get(url, timeout=15, headers={"User-Agent": KOENTANBO_UA})
         if r.status_code != 200:
             return []
+        r.encoding = r.apparent_encoding
         soup = BeautifulSoup(r.text, "html.parser")
         seen = set()
         for img in soup.find_all("img", src=True):
             src = img["src"]
-            if "/content/" in src and re.search(r'\.(jpg|jpeg|png)$', src, re.I):
+            # .jpgのみ取得（サイトアイコン・ロゴは.pngなので除外できる）
+            if "/content/" in src and re.search(r'\.jpe?g$', src, re.I):
                 if src.startswith("/"):
                     src = SHINJUKU_BASE + src
                 if src not in seen:
@@ -678,19 +680,22 @@ def fetch_shinjuku_parks():
             slug    = re.sub(r'[^a-z0-9_]', '_', href.rstrip("/").split("/")[-1].lower())
             osm_id  = f"shinjuku_{slug}"
 
+            # 座標取得（既存レコードがあればDBの値を再利用）
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                if cur.fetchone():
+                cur.execute(_q("SELECT id, lat, lon FROM parks WHERE osm_id=%s"), (osm_id,))
+                existing = cur.fetchone()
+
+            if existing:
+                park_id, lat, lon = existing[0], existing[1], existing[2]
+            else:
+                coords = _geocode_park(name, address)
+                if not coords:
+                    print(f"[shinjuku] geocode 失敗: {name} ({address})")
                     _sj_status["done"] += 1
                     continue
-
-            coords = _geocode_park(name, address)
-            if not coords:
-                print(f"[shinjuku] geocode 失敗: {name} ({address})")
-                _sj_status["done"] += 1
-                continue
-            lat, lon = coords
+                lat, lon = coords
+                park_id = None
 
             detail_url = (SHINJUKU_BASE + href) if href.startswith("/") else href
             photos = _parse_shinjuku_park_detail(detail_url)
@@ -698,28 +703,36 @@ def fetch_shinjuku_parks():
             try:
                 with get_db() as conn:
                     cur = conn.cursor()
-                    cur.execute(
-                        _q(f"""INSERT INTO parks
-                               (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
-                               VALUES (%s,%s,%s,%s,'park','shinjuku',{now_expr},{now_expr})
-                               ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name),
-                    )
-                    if cur.rowcount:
+                    if park_id is None:
+                        cur.execute(
+                            _q(f"""INSERT INTO parks
+                                   (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
+                                   VALUES (%s,%s,%s,%s,'park','shinjuku',{now_expr},{now_expr})
+                                   ON CONFLICT (osm_id) DO NOTHING"""),
+                            (osm_id, lat, lon, name),
+                        )
                         if USE_SQLITE:
                             park_id = cur.lastrowid
                         else:
                             cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
                             park_id = cur.fetchone()[0]
-                        for photo_url in photos:
-                            cur.execute(
-                                _q("INSERT INTO park_photos"
-                                   " (park_id, photo_url, caption, photo_source)"
-                                   " VALUES (%s,%s,%s,'shinjuku')"),
-                                (park_id, photo_url, None),
-                            )
                         _sj_status["inserted"] += 1
                         print(f"[shinjuku] 登録: {name} ({lat:.5f},{lon:.5f}) 写真{len(photos)}枚")
+                    else:
+                        print(f"[shinjuku] 写真更新: {name} 写真{len(photos)}枚")
+
+                    # 写真を差し替え（ロゴ混入修正のため毎回更新）
+                    cur.execute(
+                        _q("DELETE FROM park_photos WHERE park_id=%s AND photo_source='shinjuku'"),
+                        (park_id,),
+                    )
+                    for photo_url in photos:
+                        cur.execute(
+                            _q("INSERT INTO park_photos"
+                               " (park_id, photo_url, caption, photo_source)"
+                               " VALUES (%s,%s,%s,'shinjuku')"),
+                            (park_id, photo_url, None),
+                        )
             except Exception as exc:
                 print(f"[shinjuku] db error {name}: {exc}")
 
