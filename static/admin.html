@@ -285,7 +285,7 @@ async function sjPollStatus() {
     if (!s.running && s.done > 0) {
       clearInterval(sjPollTimer);
       sjPollTimer = null;
-      sjSetIdle(`完了: ${s.inserted}件 登録`);
+      sjSetIdle(`完了: ${s.inserted}件 登録 / ${s.deleted || 0}件 削除`);
       loadStats();
     } else if (!s.running && s.done === 0) {
       sjSetIdle();
@@ -353,7 +353,7 @@ async function sgPollStatus() {
     if (!s.running && s.done > 0) {
       clearInterval(sgPollTimer);
       sgPollTimer = null;
-      sgSetIdle(`完了: ${s.inserted}件 登録`);
+      sgSetIdle(`完了: ${s.inserted}件 登録 / ${s.deleted || 0}件 削除`);
       loadStats();
     } else if (!s.running && s.done === 0) {
       sgSetIdle();

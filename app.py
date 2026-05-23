@@ -52,8 +52,8 @@ KOENTANBO_SITEMAPS = [
 KANTO_BBOX = (34.5, 138.5, 37.0, 141.5)
 
 _kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "skipped": 0}
-_sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
-_sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
+_sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -599,28 +599,80 @@ def koentanbo_status():
 
 # ── 新宿区公式 水遊び場 スクレイピング ──────────────────────────────────────────
 
-def _geocode_park(name: str, address: str = "") -> tuple | None:
-    """Nominatim で公園→(lat, lon) 変換。公園名優先、失敗時は住所でリトライ。"""
-    queries = [name, address] if address else [name]
-    for q in queries:
-        result = None
-        try:
-            resp = _requests.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": q, "format": "json", "limit": 1, "countrycodes": "jp"},
-                headers={"User-Agent": KOENTANBO_UA},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if data:
-                result = (float(data[0]["lat"]), float(data[0]["lon"]))
-        except Exception as exc:
-            print(f"[geocode] error '{q}': {exc}")
-        time.sleep(1.1)  # 成功・失敗問わず待機（Nominatim: 1req/s制限）
-        if result:
-            return result
+def _delete_removed_parks(source: str, current_osm_ids: set, status: dict):
+    """sourceのDBレコードのうちcurrent_osm_idsにないものを削除する。"""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(_q("SELECT id, osm_id, name FROM parks WHERE source=%s"), (source,))
+            db_parks = cur.fetchall()
+        to_delete = [(r[0], r[1], r[2]) for r in db_parks if r[1] not in current_osm_ids]
+        if not to_delete:
+            return
+        with get_db() as conn:
+            cur = conn.cursor()
+            for pid, oid, pname in to_delete:
+                cur.execute(_q("DELETE FROM park_photos WHERE park_id=%s"), (pid,))
+                cur.execute(_q("DELETE FROM parks WHERE id=%s"), (pid,))
+                print(f"[{source}] 削除: {pname} ({oid})")
+                status["deleted"] += 1
+    except Exception as exc:
+        print(f"[{source}] delete error: {exc}")
+
+
+def _geocode_nominatim(q: str) -> tuple | None:
+    """Nominatim で検索。成功・失敗問わず 1.1s 待機。"""
+    result = None
+    try:
+        resp = _requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": q, "format": "json", "limit": 1, "countrycodes": "jp"},
+            headers={"User-Agent": KOENTANBO_UA},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data:
+            result = (float(data[0]["lat"]), float(data[0]["lon"]))
+    except Exception as exc:
+        print(f"[geocode/nominatim] error '{q}': {exc}")
+    time.sleep(1.1)
+    return result
+
+
+def _geocode_gsi(address: str) -> tuple | None:
+    """国土地理院 API で住所→(lat, lon) 変換。日本語住所に強く制限なし。"""
+    try:
+        resp = _requests.get(
+            "https://msearch.gsi.go.jp/address-search/AddressSearch",
+            params={"q": address},
+            headers={"User-Agent": KOENTANBO_UA},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data:
+            lon, lat = data[0]["geometry"]["coordinates"]
+            return (float(lat), float(lon))
+    except Exception as exc:
+        print(f"[geocode/gsi] error '{address}': {exc}")
     return None
+
+
+def _geocode_park(name: str, address: str = "") -> tuple | None:
+    """公園名優先で Nominatim → 国土地理院 → 住所Nominatim の順で試みる。"""
+    # 1. 公園名で Nominatim
+    result = _geocode_nominatim(name)
+    if result:
+        return result
+    if not address:
+        return None
+    # 2. 住所で国土地理院（制限なし・日本語住所に強い）
+    result = _geocode_gsi(address)
+    if result:
+        return result
+    # 3. 住所で Nominatim（最終手段）
+    return _geocode_nominatim(address)
 
 
 def _parse_shinjuku_park_detail(url: str) -> list:
@@ -649,7 +701,7 @@ def _parse_shinjuku_park_detail(url: str) -> list:
 
 def fetch_shinjuku_parks():
     global _sj_status
-    _sj_status = {"running": True, "total": 0, "done": 0, "inserted": 0}
+    _sj_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
     headers = {"User-Agent": KOENTANBO_UA}
     try:
         r = _requests.get(SHINJUKU_URL, timeout=15, headers=headers)
@@ -673,6 +725,12 @@ def fetch_shinjuku_parks():
             address = cells[1].get_text(strip=True) if len(cells) > 1 else ""
             seen_links.add(href)
             parks_data.append({"name": name, "href": href, "address": address})
+
+        # 今回取得した osm_id 一覧（削除判定用）
+        current_osm_ids = {
+            f"shinjuku_{re.sub(r'[^a-z0-9_]', '_', p['href'].rstrip('/').split('/')[-1].lower())}"
+            for p in parks_data
+        }
 
         _sj_status["total"] = len(parks_data)
         print(f"[shinjuku] {len(parks_data)} 件発見")
@@ -743,11 +801,14 @@ def fetch_shinjuku_parks():
 
             _sj_status["done"] += 1
 
+        # 元データから消えた公園を削除
+        _delete_removed_parks("shinjuku", current_osm_ids, _sj_status)
+
     except Exception as exc:
         print(f"[shinjuku] fetch error: {exc}")
     finally:
         _sj_status["running"] = False
-        print(f"[shinjuku] 完了: {_sj_status['inserted']} 件登録")
+        print(f"[shinjuku] 完了: {_sj_status['inserted']} 件登録 / {_sj_status['deleted']} 件削除")
 
 
 @app.post("/api/sync/shinjuku")
@@ -767,7 +828,7 @@ def shinjuku_status():
 
 def fetch_suginami_parks():
     global _sg_status
-    _sg_status = {"running": True, "total": 0, "done": 0, "inserted": 0}
+    _sg_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
     headers = {"User-Agent": KOENTANBO_UA}
     try:
         r = _requests.get(SUGINAMI_URL, timeout=15, headers=headers)
@@ -788,6 +849,12 @@ def fetch_suginami_parks():
             if not name:
                 continue
             parks_data.append({"name": name, "address": address})
+
+        # 今回取得した osm_id 一覧（削除判定用）
+        current_osm_ids = {
+            f"suginami_{re.sub(r'[\s/\\]', '_', p['name'])}"
+            for p in parks_data
+        }
 
         _sg_status["total"] = len(parks_data)
         print(f"[suginami] {len(parks_data)} 件発見（流れあり）")
@@ -831,11 +898,14 @@ def fetch_suginami_parks():
 
             _sg_status["done"] += 1
 
+        # 元データから消えた公園を削除
+        _delete_removed_parks("suginami", current_osm_ids, _sg_status)
+
     except Exception as exc:
         print(f"[suginami] fetch error: {exc}")
     finally:
         _sg_status["running"] = False
-        print(f"[suginami] 完了: {_sg_status['inserted']} 件登録")
+        print(f"[suginami] 完了: {_sg_status['inserted']} 件登録 / {_sg_status['deleted']} 件削除")
 
 
 @app.post("/api/sync/suginami")
