@@ -223,7 +223,7 @@ function renderPanel(p, photos) {
     } else if (p.source === 'shinjuku') {
       let text = '🌊 水遊びができる公園です';
       if (p.description) {
-        text += '\n' + p.description.split('\n').map(l => '・' + l).join('\n');
+        text += '\n' + p.description.split('\n').map(l => l === '' ? '' : '・' + l).join('\n');
       }
       descEl.textContent = text;
       descEl.classList.remove('hidden');

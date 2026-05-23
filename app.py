@@ -773,7 +773,9 @@ def fetch_shinjuku_parks():
                 if txt(3): extra.append(f"時期: {txt(3)}")
                 if txt(4): extra.append(f"時間: {txt(4)}")
                 if extra:
-                    current_park["desc_parts"].append("（追加）" + "　".join(extra))
+                    current_park["desc_parts"].append("")  # 空行
+                    for item in extra:
+                        current_park["desc_parts"].append(f"（追加）{item}")
 
         if current_park:
             parks_data.append(current_park)
