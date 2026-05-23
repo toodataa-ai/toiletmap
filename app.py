@@ -647,22 +647,23 @@ def fetch_shinjuku_parks():
     try:
         r = _requests.get(SHINJUKU_URL, timeout=15, headers=headers)
         r.raise_for_status()
-        soup = BeautifulSoup(r.content, "html.parser")
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
 
         parks_data = []
         seen_links = set()
         for tr in soup.find_all("tr"):
-            tds = tr.find_all("td")
-            if not tds:
+            cells = tr.find_all(["th", "td"])  # 公園名は <th scope="row">
+            if not cells:
                 continue
-            a = tds[0].find("a", href=True)
+            a = cells[0].find("a", href=True)
             if not a:
                 continue
             href = a["href"]
             if href in seen_links:
                 continue
             name    = a.get_text(strip=True)
-            address = tds[1].get_text(strip=True) if len(tds) > 1 else ""
+            address = cells[1].get_text(strip=True) if len(cells) > 1 else ""
             seen_links.add(href)
             parks_data.append({"name": name, "href": href, "address": address})
 
