@@ -67,17 +67,18 @@ function makeStarIcon(color) {
   return L.divIcon({ html: svg, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
 }
 
-function markerIcon(parkType, photoCount, createdAt) {
+function markerIcon(parkType, photoCount, createdAt, source) {
   if (filterDate && createdAt && new Date(createdAt) >= filterDate) return makeIcon('#FF5722');
-  if (photoCount > 0)      return makeStarIcon('#1976D2');
-  if (parkType === 'park') return makeIcon('#388E3C');
+  if (source === 'shinjuku') return makeStarIcon('#00BCD4');
+  if (photoCount > 0)        return makeStarIcon('#1976D2');
+  if (parkType === 'park')   return makeIcon('#388E3C');
   return makeIcon('#4CAF50');
 }
 
 function addMarker(p) {
   if (markers.has(p.id)) return;
   const marker = L.marker([p.lat, p.lon], {
-    icon: markerIcon(p.park_type, p.photo_count, p.created_at),
+    icon: markerIcon(p.park_type, p.photo_count, p.created_at, p.source),
   });
   marker.on('click', () => openPanel(p.id));
   clusterGroup.addLayer(marker);
@@ -87,13 +88,13 @@ function addMarker(p) {
 function updateMarkerColor(id, parkType, photoCount, createdAt) {
   const entry = markers.get(id);
   if (!entry) return;
-  entry.marker.setIcon(markerIcon(parkType, photoCount, createdAt));
+  entry.marker.setIcon(markerIcon(parkType, photoCount, createdAt, entry.data?.source));
 }
 
 function recolorAllMarkers() {
   markers.forEach((entry) => {
     const p = entry.data;
-    entry.marker.setIcon(markerIcon(p.park_type, p.photo_count, p.created_at));
+    entry.marker.setIcon(markerIcon(p.park_type, p.photo_count, p.created_at, p.source));
   });
 }
 

@@ -39,6 +39,8 @@ TOKYO_BBOX   = (35.50, 139.40, 35.90, 139.95)
 
 KOENTANBO_BASE     = "https://www.koentanbo.com"
 KOENTANBO_UA       = "parkmap-bot/1.0"
+SHINJUKU_BASE      = "https://www.city.shinjuku.lg.jp"
+SHINJUKU_URL       = f"{SHINJUKU_BASE}/seikatsu/file15_03_00020.html"
 KOENTANBO_SITEMAPS = [
     f"{KOENTANBO_BASE}/post-sitemap.xml",
     f"{KOENTANBO_BASE}/post-sitemap2.xml",
@@ -49,6 +51,7 @@ KOENTANBO_SITEMAPS = [
 KANTO_BBOX = (34.5, 138.5, 37.0, 141.5)
 
 _kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "skipped": 0}
+_sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -281,6 +284,7 @@ def list_parks(
                 SELECT p.id, p.lat, p.lon,
                        COALESCE(p.name,'公園') AS name,
                        p.park_type,
+                       p.source,
                        COUNT(ph.id) AS photo_count,
                        p.created_at
                 FROM parks p
@@ -293,6 +297,7 @@ def list_parks(
                 SELECT p.id, p.lat, p.lon,
                        COALESCE(p.name,'公園') AS name,
                        p.park_type,
+                       p.source,
                        COUNT(ph.id) AS photo_count,
                        p.created_at
                 FROM parks p
@@ -368,6 +373,7 @@ def search_parks(q: str = Query("", min_length=1), limit: int = Query(20, le=50)
             SELECT p.id, p.lat, p.lon,
                    COALESCE(p.name,'公園') AS name,
                    p.park_type,
+                   p.source,
                    COUNT(ph.id) AS photo_count,
                    p.created_at
             FROM parks p
@@ -587,6 +593,154 @@ def sync_koentanbo():
 @app.get("/api/sync/koentanbo/status")
 def koentanbo_status():
     return _kb_status
+
+
+# ── 新宿区公式 水遊び場 スクレイピング ──────────────────────────────────────────
+
+def _geocode_address(address: str) -> tuple | None:
+    """Nominatim で住所→(lat, lon) 変換。失敗時は None。"""
+    full = f"東京都新宿区{address}"
+    try:
+        resp = _requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": full, "format": "json", "limit": 1, "countrycodes": "jp"},
+            headers={"User-Agent": KOENTANBO_UA},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data:
+            return float(data[0]["lat"]), float(data[0]["lon"])
+    except Exception as exc:
+        print(f"[shinjuku] geocode error '{full}': {exc}")
+    return None
+
+
+def _parse_shinjuku_park_detail(url: str) -> list:
+    """詳細ページから写真URL リストを返す（最大5件）。"""
+    photos = []
+    try:
+        r = _requests.get(url, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        seen = set()
+        for img in soup.find_all("img", src=True):
+            src = img["src"]
+            if "/content/" in src and re.search(r'\.(jpg|jpeg|png)$', src, re.I):
+                if src.startswith("/"):
+                    src = SHINJUKU_BASE + src
+                if src not in seen:
+                    seen.add(src)
+                    photos.append(src)
+    except Exception as exc:
+        print(f"[shinjuku] detail error {url}: {exc}")
+    return photos[:5]
+
+
+def fetch_shinjuku_parks():
+    global _sj_status
+    _sj_status = {"running": True, "total": 0, "done": 0, "inserted": 0}
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(SHINJUKU_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.content, "html.parser")
+
+        parks_data = []
+        seen_links = set()
+        for tr in soup.find_all("tr"):
+            tds = tr.find_all("td")
+            if not tds:
+                continue
+            a = tds[0].find("a", href=True)
+            if not a:
+                continue
+            href = a["href"]
+            if href in seen_links:
+                continue
+            name    = a.get_text(strip=True)
+            address = tds[1].get_text(strip=True) if len(tds) > 1 else ""
+            seen_links.add(href)
+            parks_data.append({"name": name, "href": href, "address": address})
+
+        _sj_status["total"] = len(parks_data)
+        print(f"[shinjuku] {len(parks_data)} 件発見")
+
+        now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+        for park in parks_data:
+            name    = park["name"]
+            href    = park["href"]
+            address = park["address"]
+            slug    = re.sub(r'[^a-z0-9_]', '_', href.rstrip("/").split("/")[-1].lower())
+            osm_id  = f"shinjuku_{slug}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                if cur.fetchone():
+                    _sj_status["done"] += 1
+                    continue
+
+            coords = _geocode_address(address)
+            time.sleep(1.1)  # Nominatim: 1 req/s 制限
+            if not coords:
+                print(f"[shinjuku] geocode 失敗: {name} ({address})")
+                _sj_status["done"] += 1
+                continue
+            lat, lon = coords
+
+            detail_url = (SHINJUKU_BASE + href) if href.startswith("/") else href
+            photos = _parse_shinjuku_park_detail(detail_url)
+
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        _q(f"""INSERT INTO parks
+                               (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','shinjuku',{now_expr},{now_expr})
+                               ON CONFLICT (osm_id) DO NOTHING"""),
+                        (osm_id, lat, lon, name),
+                    )
+                    if cur.rowcount:
+                        if USE_SQLITE:
+                            park_id = cur.lastrowid
+                        else:
+                            cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                            park_id = cur.fetchone()[0]
+                        for photo_url in photos:
+                            cur.execute(
+                                _q("INSERT INTO park_photos"
+                                   " (park_id, photo_url, caption, photo_source)"
+                                   " VALUES (%s,%s,%s,'shinjuku')"),
+                                (park_id, photo_url, None),
+                            )
+                        _sj_status["inserted"] += 1
+                        print(f"[shinjuku] 登録: {name} ({lat:.5f},{lon:.5f}) 写真{len(photos)}枚")
+            except Exception as exc:
+                print(f"[shinjuku] db error {name}: {exc}")
+
+            _sj_status["done"] += 1
+
+    except Exception as exc:
+        print(f"[shinjuku] fetch error: {exc}")
+    finally:
+        _sj_status["running"] = False
+        print(f"[shinjuku] 完了: {_sj_status['inserted']} 件登録")
+
+
+@app.post("/api/sync/shinjuku")
+def sync_shinjuku():
+    if _sj_status["running"]:
+        return {"status": "already_running", **_sj_status}
+    threading.Thread(target=fetch_shinjuku_parks, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/shinjuku/status")
+def shinjuku_status():
+    return _sj_status
 
 
 @app.post("/api/visit", status_code=201)
