@@ -569,6 +569,7 @@ body.top-page {
 .ext-link-btn.gmap       { background: #E8F5E9; color: #2E7D32; border: 1px solid #A5D6A7; }
 .ext-link-btn.gmap-photo { background: #FFF8E1; color: #F57F17; border: 1px solid #FFE082; }
 .ext-link-btn.kb         { background: #F1F8E9; color: #558B2F; border: 1px solid #C5E1A5; }
+.ext-link-btn.source     { background: #E3F2FD; color: #1565C0; border: 1px solid #90CAF9; }
 
 /* ── 写真ギャラリー ──────────────────────────────────── */
 #panel-gallery-wrap { margin-bottom: 16px; }

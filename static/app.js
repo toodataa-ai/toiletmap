@@ -244,6 +244,16 @@ function renderPanel(p, photos) {
     kbEl.classList.add('hidden');
   }
 
+  const srcEl = document.getElementById('source-link');
+  if (srcEl) {
+    if (p.source_url) {
+      srcEl.href = p.source_url;
+      srcEl.classList.remove('hidden');
+    } else {
+      srcEl.classList.add('hidden');
+    }
+  }
+
   const gallery  = document.getElementById('panel-gallery');
   const noPhotos = document.getElementById('no-photos');
   gallery.innerHTML = '';
