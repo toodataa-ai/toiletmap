@@ -204,6 +204,19 @@ function renderPanel(p, photos) {
   const meta = [typeLabel, p.operator ? `管理: ${p.operator}` : ''].filter(Boolean).join('　');
   document.getElementById('panel-meta').textContent = meta;
 
+  const descEl = document.getElementById('panel-source-desc');
+  if (descEl) {
+    if (p.source === 'suginami') {
+      descEl.textContent = '💧 流れのある公園です';
+      descEl.classList.remove('hidden');
+    } else if (p.source === 'shinjuku') {
+      descEl.textContent = '🌊 水遊びができる公園です';
+      descEl.classList.remove('hidden');
+    } else {
+      descEl.classList.add('hidden');
+    }
+  }
+
   // 外部リンク
   const name = p.name || '公園';
   document.getElementById('gmap-link').href = gmapUrl(p.lat, p.lon, name);

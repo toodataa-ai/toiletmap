@@ -235,7 +235,8 @@ html, body { height: 100%; font-family: var(--font); color: var(--color-text); }
   font-size: 18px; font-weight: 700; margin-bottom: 2px;
   padding-right: 32px;
 }
-.sub-text { font-size: 12px; color: var(--color-sub); margin-bottom: 16px; }
+.sub-text { font-size: 12px; color: var(--color-sub); margin-bottom: 8px; }
+.source-desc { font-size: 13px; color: #0097A7; margin-bottom: 12px; }
 
 /* スコアカード */
 #panel-scores {
