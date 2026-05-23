@@ -597,22 +597,24 @@ def koentanbo_status():
 
 # ── 新宿区公式 水遊び場 スクレイピング ──────────────────────────────────────────
 
-def _geocode_address(address: str) -> tuple | None:
-    """Nominatim で住所→(lat, lon) 変換。失敗時は None。"""
-    full = f"東京都新宿区{address}"
-    try:
-        resp = _requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": full, "format": "json", "limit": 1, "countrycodes": "jp"},
-            headers={"User-Agent": KOENTANBO_UA},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-    except Exception as exc:
-        print(f"[shinjuku] geocode error '{full}': {exc}")
+def _geocode_park(name: str, address: str) -> tuple | None:
+    """Nominatim で公園→(lat, lon) 変換。公園名優先、失敗時は住所でリトライ。"""
+    queries = [name, f"東京都新宿区{address}"] if address else [name]
+    for q in queries:
+        try:
+            resp = _requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": q, "format": "json", "limit": 1, "countrycodes": "jp"},
+                headers={"User-Agent": KOENTANBO_UA},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+        except Exception as exc:
+            print(f"[shinjuku] geocode error '{q}': {exc}")
+        time.sleep(1.1)
     return None
 
 
@@ -682,8 +684,7 @@ def fetch_shinjuku_parks():
                     _sj_status["done"] += 1
                     continue
 
-            coords = _geocode_address(address)
-            time.sleep(1.1)  # Nominatim: 1 req/s 制限
+            coords = _geocode_park(name, address)
             if not coords:
                 print(f"[shinjuku] geocode 失敗: {name} ({address})")
                 _sj_status["done"] += 1
