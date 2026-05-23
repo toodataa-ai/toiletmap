@@ -289,6 +289,16 @@ html, body { height: 100%; font-family: var(--font); color: var(--color-text); }
   border-radius: 12px; font-size: 15px; font-weight: 600;
   cursor: pointer; width: 100%; margin-top: 10px;
 }
+.btn-wiki {
+  display: block;
+  background: #E0F7FA; color: #006064;
+  border: 1px solid #80DEEA; padding: 10px 24px;
+  border-radius: 12px; font-size: 13px; font-weight: 600;
+  cursor: pointer; width: 100%; margin-top: 10px;
+  transition: background 0.15s;
+}
+.btn-wiki:hover:not(:disabled) { background: #B2EBF2; }
+.btn-wiki:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* ── モーダル ────────────────────────────────────────── */
 #modal-backdrop {

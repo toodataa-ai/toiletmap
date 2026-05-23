@@ -469,6 +469,37 @@ document.getElementById('add-form').addEventListener('submit', async e => {
 });
 
 // ── イベントリスナー ──────────────────────────────────────────────────────────
+document.getElementById('wiki-photo-btn').addEventListener('click', async () => {
+  if (!currentId) return;
+  const cached = markers.get(currentId)?.data;
+  const name = cached?.name;
+  if (!name || name === '遊び場' || name === '公園') {
+    alert('公園名が不明なため検索できません');
+    return;
+  }
+  const btn = document.getElementById('wiki-photo-btn');
+  btn.disabled = true;
+  btn.textContent = '🔍 検索中…';
+  document.getElementById('photo-fetching').classList.remove('hidden');
+  const wikiUrl = await fetchWikiPhoto(name);
+  document.getElementById('photo-fetching').classList.add('hidden');
+  btn.disabled = false;
+  btn.textContent = '🔍 Wikipediaから写真を自動取得';
+  if (wikiUrl) {
+    await fetch(`/api/parks/${currentId}/photos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_url: wikiUrl, caption: 'Wikipedia より自動取得' }),
+    }).catch(() => {});
+    const updated = await fetch(`/api/parks/${currentId}`).then(r => r.json());
+    renderPanel(updated, updated.photos || []);
+    updateMarkerColor(currentId, updated.park_type, updated.photo_count, updated.created_at);
+    if (markers.has(currentId)) markers.get(currentId).data = updated;
+  } else {
+    alert('Wikipediaに写真が見つかりませんでした');
+  }
+});
+
 document.getElementById('panel-close').addEventListener('click', closePanel);
 document.getElementById('open-photo-btn').addEventListener('click', openPhotoModal);
 document.getElementById('modal-close').addEventListener('click', closeModal);
