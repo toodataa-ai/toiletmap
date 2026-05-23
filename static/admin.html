@@ -140,6 +140,25 @@
     </div>
   </div>
 
+  <!-- 練馬区公式 同期 -->
+  <div class="card">
+    <h2>🏙️ 練馬区公式 水施設 データ取得</h2>
+
+    <div class="status-row">
+      <span>ステータス：</span>
+      <span id="nm-badge" class="badge idle">待機中</span>
+    </div>
+
+    <div class="progress-wrap" id="nm-progress-wrap">
+      <div class="progress-fill" id="nm-progress-fill"></div>
+    </div>
+    <div id="nm-status-detail">—</div>
+
+    <div style="margin-top:16px;">
+      <button id="nm-run-btn" class="btn btn-primary">▶ 今すぐ取得</button>
+    </div>
+  </div>
+
   <!-- スケジュール情報 -->
   <div class="card">
     <h2>⏰ 自動スケジュール</h2>
@@ -377,6 +396,72 @@ document.getElementById('sg-run-btn').addEventListener('click', async () => {
   if (s.running) {
     sgSetRunning();
     sgPollTimer = setInterval(sgPollStatus, 2000);
+  }
+})();
+
+// ── 練馬区 ────────────────────────────────────────────────────────────────────
+let nmPollTimer = null;
+
+function nmSetIdle(msg = '—') {
+  document.getElementById('nm-badge').className = 'badge idle';
+  document.getElementById('nm-badge').textContent = '待機中';
+  document.getElementById('nm-progress-wrap').classList.remove('indeterminate');
+  document.getElementById('nm-progress-fill').style.width = '0%';
+  document.getElementById('nm-status-detail').textContent = msg;
+  document.getElementById('nm-run-btn').disabled = false;
+}
+
+function nmSetRunning() {
+  document.getElementById('nm-badge').className = 'badge running';
+  document.getElementById('nm-badge').textContent = '実行中';
+  document.getElementById('nm-run-btn').disabled = true;
+}
+
+async function nmPollStatus() {
+  try {
+    const s = await fetch('/api/sync/nerima/status').then(r => r.json());
+    const wrap   = document.getElementById('nm-progress-wrap');
+    const fill   = document.getElementById('nm-progress-fill');
+    const detail = document.getElementById('nm-status-detail');
+
+    if (s.running || s.done > 0) {
+      nmSetRunning();
+      if (s.total === 0) {
+        wrap.classList.add('indeterminate');
+        detail.textContent = '初期化中…';
+      } else {
+        wrap.classList.remove('indeterminate');
+        fill.style.width = Math.round(s.done / s.total * 100) + '%';
+        detail.textContent = `${s.done} / ${s.total} 件処理　登録: ${s.inserted}件`;
+      }
+    }
+
+    if (!s.running && s.done > 0) {
+      clearInterval(nmPollTimer);
+      nmPollTimer = null;
+      nmSetIdle(`完了: ${s.inserted}件 登録 / ${s.deleted || 0}件 削除`);
+      loadStats();
+    } else if (!s.running && s.done === 0) {
+      nmSetIdle();
+    }
+  } catch (e) {}
+}
+
+document.getElementById('nm-run-btn').addEventListener('click', async () => {
+  if (!confirm('練馬区公式サイトから水施設データを取得します。よろしいですか？')) return;
+  nmSetRunning();
+  document.getElementById('nm-progress-wrap').classList.add('indeterminate');
+  document.getElementById('nm-status-detail').textContent = '開始しています…';
+  try { await fetch('/api/sync/nerima', { method: 'POST' }); } catch (e) {}
+  clearInterval(nmPollTimer);
+  nmPollTimer = setInterval(nmPollStatus, 2000);
+});
+
+(async () => {
+  const s = await fetch('/api/sync/nerima/status').then(r => r.json()).catch(() => ({}));
+  if (s.running) {
+    nmSetRunning();
+    nmPollTimer = setInterval(nmPollStatus, 2000);
   }
 })();
 </script>

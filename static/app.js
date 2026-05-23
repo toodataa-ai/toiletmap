@@ -69,7 +69,7 @@ function makeStarIcon(color) {
 
 function markerIcon(parkType, photoCount, createdAt, source) {
   if (filterDate && createdAt && new Date(createdAt) >= filterDate) return makeIcon('#FF5722');
-  if (source === 'shinjuku' || source === 'suginami') return makeStarIcon('#00BCD4');
+  if (source === 'shinjuku' || source === 'suginami' || source === 'nerima') return makeStarIcon('#00BCD4');
   if (photoCount > 0)        return makeStarIcon('#E53935');
   if (parkType === 'park')   return makeIcon('#388E3C');
   return makeIcon('#4CAF50');
@@ -225,6 +225,11 @@ function renderPanel(p, photos) {
       if (p.description) {
         text += '\n' + p.description.split('\n').map(l => l === '' ? '' : '・' + l).join('\n');
       }
+      descEl.textContent = text;
+      descEl.classList.remove('hidden');
+    } else if (p.source === 'nerima') {
+      let text = '💧 水遊びができる公園です';
+      if (p.description) text += '\n・' + p.description;
       descEl.textContent = text;
       descEl.classList.remove('hidden');
     } else {

@@ -42,6 +42,7 @@ KOENTANBO_UA       = "parkmap-bot/1.0"
 SHINJUKU_BASE      = "https://www.city.shinjuku.lg.jp"
 SHINJUKU_URL       = f"{SHINJUKU_BASE}/seikatsu/file15_03_00020.html"
 SUGINAMI_URL       = "https://www.city.suginami.tokyo.jp/s100/1621.html"
+NERIMA_URL         = "https://www.city.nerima.tokyo.jp/kankomoyoshi/annai/fukei/nerima_park/kunai/mizusisetu.html"
 KOENTANBO_SITEMAPS = [
     f"{KOENTANBO_BASE}/post-sitemap.xml",
     f"{KOENTANBO_BASE}/post-sitemap2.xml",
@@ -54,6 +55,7 @@ KANTO_BBOX = (34.5, 138.5, 37.0, 141.5)
 _kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "skipped": 0}
 _sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_nm_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -974,6 +976,117 @@ def sync_suginami():
 @app.get("/api/sync/suginami/status")
 def suginami_status():
     return _sg_status
+
+
+# ── 練馬区公式 水施設 スクレイピング ──────────────────────────────────────────
+
+def fetch_nerima_parks():
+    global _nm_status
+    _nm_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(NERIMA_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        parks_data = []
+        seen = set()
+        for table in soup.find_all("table"):
+            tbody = table.find("tbody") or table
+            for tr in tbody.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 5:
+                    continue
+                name = cells[0].get_text(strip=True)
+                if not name or name == "公園名":
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                address  = cells[1].get_text(strip=True)
+                ike      = "○" in cells[2].get_text()
+                funsui   = "○" in cells[3].get_text()
+                nagare   = "○" in cells[4].get_text()
+                facilities = []
+                if ike:    facilities.append("池")
+                if funsui: facilities.append("噴水")
+                if nagare: facilities.append("流れ")
+                if not facilities:
+                    continue
+                parks_data.append({
+                    "name": name, "address": address,
+                    "description": f"施設: {'・'.join(facilities)}",
+                })
+
+        current_osm_ids = {
+            f"nerima_{re.sub(r'[\s/\\]', '_', p['name'])}"
+            for p in parks_data
+        }
+
+        _nm_status["total"] = len(parks_data)
+        print(f"[nerima] {len(parks_data)} 件発見")
+
+        now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+        for park in parks_data:
+            name        = park["name"]
+            address     = park["address"]
+            description = park["description"]
+            slug        = re.sub(r"[\s/\\]", "_", name)
+            osm_id      = f"nerima_{slug}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                if cur.fetchone():
+                    _nm_status["done"] += 1
+                    continue
+
+            coords = _geocode_park(name, f"東京都練馬区{address}" if address else "")
+            if not coords:
+                print(f"[nerima] geocode 失敗: {name} ({address})")
+                _nm_status["done"] += 1
+                continue
+            lat, lon = coords
+
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        _q(f"""INSERT INTO parks
+                               (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','nerima',%s,%s,{now_expr},{now_expr})
+                               ON CONFLICT (osm_id) DO NOTHING"""),
+                        (osm_id, lat, lon, name, description, NERIMA_URL),
+                    )
+                    if cur.rowcount:
+                        _nm_status["inserted"] += 1
+                        print(f"[nerima] 登録: {name} ({lat:.5f},{lon:.5f})")
+            except Exception as exc:
+                print(f"[nerima] db error {name}: {exc}")
+
+            _nm_status["done"] += 1
+
+        _delete_removed_parks("nerima", current_osm_ids, _nm_status)
+
+    except Exception as exc:
+        print(f"[nerima] fetch error: {exc}")
+    finally:
+        _nm_status["running"] = False
+        print(f"[nerima] 完了: {_nm_status['inserted']} 件登録 / {_nm_status['deleted']} 件削除")
+
+
+@app.post("/api/sync/nerima")
+def sync_nerima():
+    if _nm_status["running"]:
+        return {"status": "already_running", **_nm_status}
+    threading.Thread(target=fetch_nerima_parks, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/nerima/status")
+def nerima_status():
+    return _nm_status
 
 
 @app.post("/api/visit", status_code=201)
