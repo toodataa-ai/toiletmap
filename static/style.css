@@ -501,6 +501,8 @@ body.top-page {
 }
 .top-stat-num { font-size: 22px; font-weight: 800; color: var(--color-primary); }
 .top-stat-label { font-size: 11px; color: var(--color-sub); margin-top: 4px; }
+.top-stat-breakdown { font-size: 10px; color: var(--color-sub); margin-top: 6px; line-height: 1.7; }
+.top-stat-today { font-size: 11px; color: var(--color-sub); margin-top: 5px; }
 
 .top-guide {
   background: var(--color-white); border-radius: 16px;

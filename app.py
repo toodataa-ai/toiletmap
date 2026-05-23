@@ -869,7 +869,16 @@ def stats():
         ph = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM page_views")
         v = cur.fetchone()[0]
-    return {"parks": p, "photos": ph, "visits": v}
+        # ソース別内訳
+        cur.execute("SELECT COALESCE(source,'osm'), COUNT(*) FROM parks GROUP BY source ORDER BY COUNT(*) DESC")
+        breakdown = dict(cur.fetchall())
+        # 今日の訪問数（JST）
+        if USE_SQLITE:
+            cur.execute("SELECT COUNT(*) FROM page_views WHERE date(created_at,'+9 hours')=date('now','+9 hours')")
+        else:
+            cur.execute("SELECT COUNT(*) FROM page_views WHERE (created_at AT TIME ZONE 'Asia/Tokyo')::date=(NOW() AT TIME ZONE 'Asia/Tokyo')::date")
+        today_v = cur.fetchone()[0]
+    return {"parks": p, "photos": ph, "visits": v, "visits_today": today_v, "parks_breakdown": breakdown}
 
 
 @app.get("/api/backup")
