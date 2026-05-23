@@ -207,7 +207,18 @@ function renderPanel(p, photos) {
   const descEl = document.getElementById('panel-source-desc');
   if (descEl) {
     if (p.source === 'suginami') {
-      descEl.textContent = '💧 流れのある公園です';
+      const name = p.name || '';
+      let period;
+      if (['馬橋公園', '桃井原っぱ公園', '蚕糸の森公園'].includes(name)) {
+        period = '稼働期間：通年';
+      } else if (name === '井草森公園') {
+        period = '稼働期間：5月上旬〜9月下旬';
+      } else if (name === '下高井戸おおぞら公園') {
+        period = '稼働期間：3月中旬〜11月下旬';
+      } else {
+        period = '稼働期間：7月上旬〜8月下旬';
+      }
+      descEl.textContent = '💧 流れのある公園です\n' + period + '　時間：9:30〜16:30';
       descEl.classList.remove('hidden');
     } else if (p.source === 'shinjuku') {
       descEl.textContent = '🌊 水遊びができる公園です';
