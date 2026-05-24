@@ -990,34 +990,42 @@ def fetch_nerima_parks():
         r.encoding = r.apparent_encoding
         soup = BeautifulSoup(r.text, "html.parser")
 
+        def _has_circle(cell):
+            t = cell.get_text(strip=True)
+            return "○" in t or "〇" in t
+
         parks_data = []
         seen = set()
         for table in soup.find_all("table"):
             tbody = table.find("tbody") or table
             for tr in tbody.find_all("tr"):
                 cells = tr.find_all(["th", "td"])
-                if len(cells) < 5:
-                    continue
-                name = cells[0].get_text(strip=True)
-                if not name or name == "公園名":
-                    continue
-                if name in seen:
-                    continue
-                seen.add(name)
-                address  = cells[1].get_text(strip=True)
-                ike      = "○" in cells[2].get_text()
-                funsui   = "○" in cells[3].get_text()
-                nagare   = "○" in cells[4].get_text()
-                facilities = []
-                if ike:    facilities.append("池")
-                if funsui: facilities.append("噴水")
-                if nagare: facilities.append("流れ")
-                if not facilities:
-                    continue
-                parks_data.append({
-                    "name": name, "address": address,
-                    "description": f"施設: {'・'.join(facilities)}",
-                })
+                for offset in [0, 5]:
+                    if len(cells) < offset + 5:
+                        continue
+                    name = cells[offset].get_text(strip=True)
+                    # 注記付きセル（例: （注2）ガラクタ公園…）はスキップ
+                    if re.match(r'^（[注※]', name):
+                        continue
+                    if not name or name == "公園名":
+                        continue
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    address = cells[offset + 1].get_text(strip=True)
+                    ike    = _has_circle(cells[offset + 2])
+                    funsui = _has_circle(cells[offset + 3])
+                    nagare = _has_circle(cells[offset + 4])
+                    facilities = []
+                    if ike:    facilities.append("池")
+                    if funsui: facilities.append("噴水")
+                    if nagare: facilities.append("流れ")
+                    if not facilities:
+                        continue
+                    parks_data.append({
+                        "name": name, "address": address,
+                        "description": f"施設: {'・'.join(facilities)}",
+                    })
 
         current_osm_ids = {
             f"nerima_{re.sub(r'[\s/\\]', '_', p['name'])}"
