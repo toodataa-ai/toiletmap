@@ -159,6 +159,25 @@
     </div>
   </div>
 
+  <!-- 都立公園 同期 -->
+  <div class="card">
+    <h2>🌳 都立公園 水遊び施設 データ取得</h2>
+
+    <div class="status-row">
+      <span>ステータス：</span>
+      <span id="tt-badge" class="badge idle">待機中</span>
+    </div>
+
+    <div class="progress-wrap" id="tt-progress-wrap">
+      <div class="progress-fill" id="tt-progress-fill"></div>
+    </div>
+    <div id="tt-status-detail">—</div>
+
+    <div style="margin-top:16px;">
+      <button id="tt-run-btn" class="btn btn-primary">▶ 今すぐ取得</button>
+    </div>
+  </div>
+
   <!-- スケジュール情報 -->
   <div class="card">
     <h2>⏰ 自動スケジュール</h2>
@@ -462,6 +481,63 @@ document.getElementById('nm-run-btn').addEventListener('click', async () => {
   if (s.running) {
     nmSetRunning();
     nmPollTimer = setInterval(nmPollStatus, 2000);
+  }
+})();
+
+// ── 都立公園 ──────────────────────────────────────────────────────────────────
+let ttPollTimer = null;
+
+function ttSetIdle(msg = '—') {
+  document.getElementById('tt-badge').className = 'badge idle';
+  document.getElementById('tt-badge').textContent = '待機中';
+  document.getElementById('tt-progress-wrap').classList.remove('indeterminate');
+  document.getElementById('tt-progress-fill').style.width = '0%';
+  document.getElementById('tt-status-detail').textContent = msg;
+  document.getElementById('tt-run-btn').disabled = false;
+}
+
+function ttSetRunning() {
+  document.getElementById('tt-badge').className = 'badge running';
+  document.getElementById('tt-badge').textContent = '実行中';
+  document.getElementById('tt-run-btn').disabled = true;
+}
+
+async function ttPollStatus() {
+  try {
+    const s = await fetch('/api/sync/toritsu/status').then(r => r.json());
+    const wrap   = document.getElementById('tt-progress-wrap');
+    const fill   = document.getElementById('tt-progress-fill');
+    const detail = document.getElementById('tt-status-detail');
+    if (s.running) {
+      ttSetRunning();
+      if (s.total > 0) {
+        wrap.classList.remove('indeterminate');
+        fill.style.width = Math.round(s.done / s.total * 100) + '%';
+        detail.textContent = `${s.done} / ${s.total} 件処理中（登録: ${s.inserted}）`;
+      }
+    } else {
+      clearInterval(ttPollTimer);
+      ttSetIdle(`完了 — 登録: ${s.inserted}, 削除: ${s.deleted}`);
+      loadStats();
+    }
+  } catch (e) { clearInterval(ttPollTimer); }
+}
+
+document.getElementById('tt-run-btn').addEventListener('click', async () => {
+  if (!confirm('都立公園公式サイトから水遊び施設データを取得します。よろしいですか？')) return;
+  ttSetRunning();
+  document.getElementById('tt-progress-wrap').classList.add('indeterminate');
+  document.getElementById('tt-status-detail').textContent = '開始しています…';
+  try { await fetch('/api/sync/toritsu', { method: 'POST' }); } catch (e) {}
+  clearInterval(ttPollTimer);
+  ttPollTimer = setInterval(ttPollStatus, 2000);
+});
+
+(async () => {
+  const s = await fetch('/api/sync/toritsu/status').then(r => r.json()).catch(() => ({}));
+  if (s.running) {
+    ttSetRunning();
+    ttPollTimer = setInterval(ttPollStatus, 2000);
   }
 })();
 </script>

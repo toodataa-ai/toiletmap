@@ -43,6 +43,7 @@ SHINJUKU_BASE      = "https://www.city.shinjuku.lg.jp"
 SHINJUKU_URL       = f"{SHINJUKU_BASE}/seikatsu/file15_03_00020.html"
 SUGINAMI_URL       = "https://www.city.suginami.tokyo.jp/s100/1621.html"
 NERIMA_URL         = "https://www.city.nerima.tokyo.jp/kankomoyoshi/annai/fukei/nerima_park/kunai/mizusisetu.html"
+TORITSU_URL        = "https://www.kensetsu.metro.tokyo.lg.jp/park/kouenannai/mizu"
 KOENTANBO_SITEMAPS = [
     f"{KOENTANBO_BASE}/post-sitemap.xml",
     f"{KOENTANBO_BASE}/post-sitemap2.xml",
@@ -56,6 +57,7 @@ _kb_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "ski
 _sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _nm_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_tt_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -990,9 +992,13 @@ def fetch_nerima_parks():
         r.encoding = r.apparent_encoding
         soup = BeautifulSoup(r.text, "html.parser")
 
-        def _has_circle(cell):
+        def _cell_facility(cell, col_name):
             t = cell.get_text(strip=True)
-            return "○" in t or "〇" in t
+            if "○" in t or "〇" in t:
+                return col_name
+            if "注釈" in t:
+                return "ミスト" if col_name == "噴水" else col_name
+            return None
 
         parks_data = []
         seen = set()
@@ -1004,22 +1010,20 @@ def fetch_nerima_parks():
                     if len(cells) < offset + 5:
                         continue
                     name = cells[offset].get_text(strip=True)
-                    # 注記付きセル（例: （注2）ガラクタ公園…）はスキップ
+                    # 注記付きセル（例: （注釈2）三原台公園…）はスキップ
                     if re.match(r'^（[注※]', name):
                         continue
-                    if not name or name == "公園名":
+                    if not name or name in {"公園名", "池", "噴水", "流れ"}:
                         continue
                     if name in seen:
                         continue
                     seen.add(name)
                     address = cells[offset + 1].get_text(strip=True)
-                    ike    = _has_circle(cells[offset + 2])
-                    funsui = _has_circle(cells[offset + 3])
-                    nagare = _has_circle(cells[offset + 4])
-                    facilities = []
-                    if ike:    facilities.append("池")
-                    if funsui: facilities.append("噴水")
-                    if nagare: facilities.append("流れ")
+                    facilities = list(filter(None, [
+                        _cell_facility(cells[offset + 2], "池"),
+                        _cell_facility(cells[offset + 3], "噴水"),
+                        _cell_facility(cells[offset + 4], "流れ"),
+                    ]))
                     if not facilities:
                         continue
                     parks_data.append({
@@ -1095,6 +1099,107 @@ def sync_nerima():
 @app.get("/api/sync/nerima/status")
 def nerima_status():
     return _nm_status
+
+
+def fetch_toritsu_parks():
+    global _tt_status
+    _tt_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(TORITSU_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = "utf-8"
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        parks_data = []
+        seen = set()
+        table = soup.find("table")
+        if not table:
+            raise ValueError("テーブルが見つかりません")
+
+        for tr in table.find_all("tr"):
+            cells = tr.find_all(["th", "td"])
+            if len(cells) < 2:
+                continue
+            name = cells[0].get_text(strip=True)
+            if not name or name == "公園名":
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            address = cells[1].get_text(strip=True)
+            a = cells[0].find("a", href=True)
+            park_url = a["href"] if a else ""
+            parks_data.append({"name": name, "address": address, "source_url": park_url})
+
+        current_osm_ids = {
+            f"toritsu_{re.sub(r'[\s/\\]', '_', p['name'])}"
+            for p in parks_data
+        }
+
+        _tt_status["total"] = len(parks_data)
+        print(f"[toritsu] {len(parks_data)} 件発見")
+
+        now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+        for park in parks_data:
+            name       = park["name"]
+            address    = park["address"]
+            source_url = park["source_url"]
+            slug       = re.sub(r"[\s/\\]", "_", name)
+            osm_id     = f"toritsu_{slug}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                if cur.fetchone():
+                    _tt_status["done"] += 1
+                    continue
+
+            coords = _geocode_park(name, f"東京都{address}")
+            if not coords:
+                print(f"[toritsu] geocode 失敗: {name} ({address})")
+                _tt_status["done"] += 1
+                continue
+            lat, lon = coords
+
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        _q(f"""INSERT INTO parks
+                               (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','toritsu',%s,%s,{now_expr},{now_expr})
+                               ON CONFLICT (osm_id) DO NOTHING"""),
+                        (osm_id, lat, lon, name, None, source_url),
+                    )
+                    if cur.rowcount:
+                        _tt_status["inserted"] += 1
+                        print(f"[toritsu] 登録: {name} ({lat:.5f},{lon:.5f})")
+            except Exception as exc:
+                print(f"[toritsu] db error {name}: {exc}")
+
+            _tt_status["done"] += 1
+
+        _delete_removed_parks("toritsu", current_osm_ids, _tt_status)
+
+    except Exception as exc:
+        print(f"[toritsu] fetch error: {exc}")
+    finally:
+        _tt_status["running"] = False
+        print(f"[toritsu] 完了: {_tt_status['inserted']} 件登録 / {_tt_status['deleted']} 件削除")
+
+
+@app.post("/api/sync/toritsu")
+def sync_toritsu():
+    if _tt_status["running"]:
+        return {"status": "already_running", **_tt_status}
+    threading.Thread(target=fetch_toritsu_parks, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/toritsu/status")
+def toritsu_status():
+    return _tt_status
 
 
 @app.post("/api/visit", status_code=201)
