@@ -1150,8 +1150,21 @@ def fetch_toritsu_parks():
 
             with get_db() as conn:
                 cur = conn.cursor()
+                # toritsu エントリが既にあればスキップ
                 cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
                 if cur.fetchone():
+                    _tt_status["done"] += 1
+                    continue
+                # 同名の既存エントリ（koentanbo 等）を toritsu として更新
+                cur.execute(_q("SELECT id FROM parks WHERE name=%s AND source != 'toritsu' LIMIT 1"), (name,))
+                existing = cur.fetchone()
+                if existing:
+                    cur.execute(
+                        _q("UPDATE parks SET source='toritsu', source_url=%s, osm_id=%s WHERE id=%s"),
+                        (source_url, osm_id, existing[0]),
+                    )
+                    _tt_status["inserted"] += 1
+                    print(f"[toritsu] 更新: {name} (id={existing[0]})")
                     _tt_status["done"] += 1
                     continue
 
