@@ -666,18 +666,22 @@ def _geocode_gsi(address: str) -> tuple | None:
 
 
 def _geocode_park(name: str, address: str = "") -> tuple | None:
-    """公園名優先で Nominatim → 国土地理院 → 住所Nominatim の順で試みる。"""
-    # 1. 公園名で Nominatim
+    """公園名優先で Nominatim → 公園名+住所Nominatim → 国土地理院 → 住所Nominatim の順で試みる。"""
+    # 1. 公園名のみで Nominatim
     result = _geocode_nominatim(name)
     if result:
         return result
     if not address:
         return None
-    # 2. 住所で国土地理院（制限なし・日本語住所に強い）
+    # 2. 公園名＋住所で Nominatim（名前単独で失敗した場合の補完）
+    result = _geocode_nominatim(f"{name} {address}")
+    if result:
+        return result
+    # 3. 住所で国土地理院（制限なし・日本語住所に強い）
     result = _geocode_gsi(address)
     if result:
         return result
-    # 3. 住所で Nominatim（最終手段）
+    # 4. 住所で Nominatim（最終手段）
     return _geocode_nominatim(address)
 
 
