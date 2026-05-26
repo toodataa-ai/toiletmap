@@ -44,6 +44,33 @@ SHINJUKU_URL       = f"{SHINJUKU_BASE}/seikatsu/file15_03_00020.html"
 SUGINAMI_URL       = "https://www.city.suginami.tokyo.jp/s100/1621.html"
 NERIMA_URL         = "https://www.city.nerima.tokyo.jp/kankomoyoshi/annai/fukei/nerima_park/kunai/mizusisetu.html"
 TORITSU_URL        = "https://www.kensetsu.metro.tokyo.lg.jp/park/kouenannai/mizu"
+
+# 都立公園22件の正確な座標（ジオコード失敗時のフォールバック）
+# 新規公園がサイトに追加された場合はここにない→自動ジオコードへフォールバック
+TORITSU_COORDS: dict[str, tuple[float, float]] = {
+    "赤塚公園":         (35.78477, 139.65644),
+    "秋留台公園":       (35.72889, 139.29417),
+    "浮間公園":         (35.78150, 139.70450),
+    "大泉中央公園":     (35.74740, 139.61740),
+    "尾久の原公園":     (35.74830, 139.78930),
+    "亀戸中央公園":     (35.69500, 139.82800),
+    "木場公園":         (35.67140, 139.81030),
+    "駒沢オリンピック公園": (35.64595, 139.65318),
+    "猿江恩賜公園":     (35.68950, 139.82300),
+    "汐入公園":         (35.73800, 139.79200),
+    "舎人公園":         (35.77500, 139.80473),
+    "戸山公園":         (35.69389, 139.70361),
+    "野川公園":         (35.65056, 139.54083),
+    "東村山中央公園":   (35.75465, 139.46858),
+    "東大和南公園":     (35.74540, 139.42686),
+    "光が丘公園":       (35.76243, 139.62890),
+    "府中の森公園":     (35.66940, 139.47758),
+    "水元公園":         (35.74333, 139.84723),
+    "武蔵野公園":       (35.69944, 139.50305),
+    "陵南公園":         (35.66667, 139.31584),
+    "林試の森公園":     (35.64148, 139.69820),
+    "井の頭自然文化園": (35.71778, 139.56612),
+}
 KOENTANBO_SITEMAPS = [
     f"{KOENTANBO_BASE}/post-sitemap.xml",
     f"{KOENTANBO_BASE}/post-sitemap2.xml",
@@ -1174,8 +1201,8 @@ def fetch_toritsu_parks(force: bool = False):
                     if other:
                         existing_id = other[0]
 
-            # ジオコード（force 時は既存エントリも再ジオコード）
-            coords = _geocode_park(name, geocode_addr)
+            # 既知座標辞書を優先、なければジオコード
+            coords = TORITSU_COORDS.get(name) or _geocode_park(name, geocode_addr)
             if not coords:
                 print(f"[toritsu] geocode 失敗: {name} ({geocode_addr})")
                 _tt_status["done"] += 1
