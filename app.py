@@ -1101,7 +1101,8 @@ def nerima_status():
     return _nm_status
 
 
-def fetch_toritsu_parks():
+def fetch_toritsu_parks(force: bool = False):
+    """force=True のとき既存エントリの座標を再ジオコードして更新する。"""
     global _tt_status
     _tt_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
     headers = {"User-Agent": KOENTANBO_UA}
@@ -1138,7 +1139,7 @@ def fetch_toritsu_parks():
         }
 
         _tt_status["total"] = len(parks_data)
-        print(f"[toritsu] {len(parks_data)} 件発見")
+        print(f"[toritsu] {len(parks_data)} 件発見 (force={force})")
 
         now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
         for park in parks_data:
@@ -1148,29 +1149,31 @@ def fetch_toritsu_parks():
             slug       = re.sub(r"[\s/\\]", "_", name)
             osm_id     = f"toritsu_{slug}"
 
+            # 「・」区切りの住所は最初の市区町村のみ使用（ジオコード精度向上）
+            address_primary = re.split(r"[・/]", address)[0].strip()
+            geocode_addr = f"東京都{address_primary}" if address_primary else ""
+
+            existing_id = None
             with get_db() as conn:
                 cur = conn.cursor()
-                # toritsu エントリが既にあればスキップ
                 cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                if cur.fetchone():
-                    _tt_status["done"] += 1
-                    continue
-                # 同名の既存エントリ（koentanbo 等）を toritsu として更新
-                cur.execute(_q("SELECT id FROM parks WHERE name=%s AND source != 'toritsu' LIMIT 1"), (name,))
-                existing = cur.fetchone()
-                if existing:
-                    cur.execute(
-                        _q("UPDATE parks SET source='toritsu', source_url=%s, osm_id=%s WHERE id=%s"),
-                        (source_url, osm_id, existing[0]),
-                    )
-                    _tt_status["inserted"] += 1
-                    print(f"[toritsu] 更新: {name} (id={existing[0]})")
-                    _tt_status["done"] += 1
-                    continue
+                row = cur.fetchone()
+                if row:
+                    existing_id = row[0]
+                    if not force:
+                        _tt_status["done"] += 1
+                        continue
+                # osm_id なし → 同名の他ソースエントリを探して toritsu に更新
+                if existing_id is None:
+                    cur.execute(_q("SELECT id FROM parks WHERE name=%s AND source != 'toritsu' LIMIT 1"), (name,))
+                    other = cur.fetchone()
+                    if other:
+                        existing_id = other[0]
 
-            coords = _geocode_park(name, f"東京都{address}")
+            # ジオコード（force 時は既存エントリも再ジオコード）
+            coords = _geocode_park(name, geocode_addr)
             if not coords:
-                print(f"[toritsu] geocode 失敗: {name} ({address})")
+                print(f"[toritsu] geocode 失敗: {name} ({geocode_addr})")
                 _tt_status["done"] += 1
                 continue
             lat, lon = coords
@@ -1178,16 +1181,22 @@ def fetch_toritsu_parks():
             try:
                 with get_db() as conn:
                     cur = conn.cursor()
-                    cur.execute(
-                        _q(f"""INSERT INTO parks
-                               (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
-                               VALUES (%s,%s,%s,%s,'park','toritsu',%s,%s,{now_expr},{now_expr})
-                               ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, None, source_url),
-                    )
-                    if cur.rowcount:
-                        _tt_status["inserted"] += 1
-                        print(f"[toritsu] 登録: {name} ({lat:.5f},{lon:.5f})")
+                    if existing_id:
+                        cur.execute(
+                            _q("UPDATE parks SET lat=%s, lon=%s, source='toritsu', source_url=%s, osm_id=%s WHERE id=%s"),
+                            (lat, lon, source_url, osm_id, existing_id),
+                        )
+                        print(f"[toritsu] 座標更新: {name} ({lat:.5f},{lon:.5f})")
+                    else:
+                        cur.execute(
+                            _q(f"""INSERT INTO parks
+                                   (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
+                                   VALUES (%s,%s,%s,%s,'park','toritsu',%s,%s,{now_expr},{now_expr})
+                                   ON CONFLICT (osm_id) DO NOTHING"""),
+                            (osm_id, lat, lon, name, None, source_url),
+                        )
+                    _tt_status["inserted"] += 1
+                    print(f"[toritsu] 登録/更新: {name} ({lat:.5f},{lon:.5f})")
             except Exception as exc:
                 print(f"[toritsu] db error {name}: {exc}")
 
@@ -1199,14 +1208,14 @@ def fetch_toritsu_parks():
         print(f"[toritsu] fetch error: {exc}")
     finally:
         _tt_status["running"] = False
-        print(f"[toritsu] 完了: {_tt_status['inserted']} 件登録 / {_tt_status['deleted']} 件削除")
+        print(f"[toritsu] 完了: {_tt_status['inserted']} 件登録/更新 / {_tt_status['deleted']} 件削除")
 
 
 @app.post("/api/sync/toritsu")
-def sync_toritsu():
+def sync_toritsu(force: bool = False):
     if _tt_status["running"]:
         return {"status": "already_running", **_tt_status}
-    threading.Thread(target=fetch_toritsu_parks, daemon=True).start()
+    threading.Thread(target=fetch_toritsu_parks, args=(force,), daemon=True).start()
     return {"status": "started"}
 
 

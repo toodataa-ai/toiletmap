@@ -173,8 +173,9 @@
     </div>
     <div id="tt-status-detail">—</div>
 
-    <div style="margin-top:16px;">
+    <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
       <button id="tt-run-btn" class="btn btn-primary">▶ 今すぐ取得</button>
+      <button id="tt-force-btn" class="btn btn-secondary" style="font-size:12px;">🔄 座標を再取得（全件）</button>
     </div>
   </div>
 
@@ -529,6 +530,16 @@ document.getElementById('tt-run-btn').addEventListener('click', async () => {
   document.getElementById('tt-progress-wrap').classList.add('indeterminate');
   document.getElementById('tt-status-detail').textContent = '開始しています…';
   try { await fetch('/api/sync/toritsu', { method: 'POST' }); } catch (e) {}
+  clearInterval(ttPollTimer);
+  ttPollTimer = setInterval(ttPollStatus, 2000);
+});
+
+document.getElementById('tt-force-btn').addEventListener('click', async () => {
+  if (!confirm('全22件の座標を再ジオコードして更新します。時間がかかります。よろしいですか？')) return;
+  ttSetRunning();
+  document.getElementById('tt-progress-wrap').classList.add('indeterminate');
+  document.getElementById('tt-status-detail').textContent = '座標再取得中…';
+  try { await fetch('/api/sync/toritsu?force=true', { method: 'POST' }); } catch (e) {}
   clearInterval(ttPollTimer);
   ttPollTimer = setInterval(ttPollStatus, 2000);
 });
