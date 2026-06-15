@@ -44,6 +44,8 @@ SHINJUKU_URL       = f"{SHINJUKU_BASE}/seikatsu/file15_03_00020.html"
 SUGINAMI_URL       = "https://www.city.suginami.tokyo.jp/s100/1621.html"
 NERIMA_URL         = "https://www.city.nerima.tokyo.jp/kankomoyoshi/annai/fukei/nerima_park/kunai/mizusisetu.html"
 TORITSU_URL        = "https://www.kensetsu.metro.tokyo.lg.jp/park/kouenannai/mizu"
+MINATO_URL         = "https://www.city.minato.tokyo.jp/shiba-koudobokutan/tosyouike.html"
+MINATO_BASE        = "https://www.city.minato.tokyo.jp"
 
 # 都立公園22件の正確な座標（ジオコード失敗時のフォールバック）
 # 新規公園がサイトに追加された場合はここにない→自動ジオコードへフォールバック
@@ -85,6 +87,7 @@ _sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "del
 _sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _nm_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _tt_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_mn_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -1253,6 +1256,98 @@ def sync_toritsu(force: bool = False):
 @app.get("/api/sync/toritsu/status")
 def toritsu_status():
     return _tt_status
+
+
+def fetch_minato_parks():
+    """港区公式サイトから水遊び場（じゃぶじゃぶ池など）を取得する。"""
+    global _mn_status
+    _mn_status = {"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(MINATO_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = "utf-8"
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        parks_data = []
+        seen = set()
+        skip_names = {"公園名", "施設名", "名称"}
+
+        for table in soup.find_all("table"):
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 2:
+                    continue
+                a = cells[1].find("a", href=True)
+                name = (a.get_text(strip=True) if a else cells[1].get_text(strip=True))
+                if not name or name in skip_names or name in seen:
+                    continue
+                seen.add(name)
+                href = a["href"] if a else ""
+                park_url = (MINATO_BASE + href) if href.startswith("/") else href
+                desc = cells[5].get_text(strip=True) if len(cells) > 5 else ""
+                parks_data.append({"name": name, "source_url": park_url, "description": desc})
+
+        current_osm_ids = {f"minato_{re.sub(r'[\s/\\]', '_', p['name'])}" for p in parks_data}
+        _mn_status["total"] = len(parks_data)
+        print(f"[minato] {len(parks_data)} 件発見")
+
+        now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+        for park in parks_data:
+            name       = park["name"]
+            source_url = park["source_url"]
+            desc       = park["description"] or None
+            osm_id     = f"minato_{re.sub(r'[\s/\\]', '_', name)}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                if cur.fetchone():
+                    _mn_status["done"] += 1
+                    continue
+
+            coords = _geocode_park(name, "東京都港区")
+            if not coords:
+                print(f"[minato] geocode 失敗: {name}")
+                _mn_status["done"] += 1
+                continue
+            lat, lon = coords
+
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        _q(f"""INSERT INTO parks
+                               (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','minato',%s,%s,{now_expr},{now_expr})
+                               ON CONFLICT (osm_id) DO NOTHING"""),
+                        (osm_id, lat, lon, name, desc, source_url),
+                    )
+                    _mn_status["inserted"] += 1
+            except Exception as exc:
+                print(f"[minato] db error {name}: {exc}")
+            _mn_status["done"] += 1
+
+        _delete_removed_parks("minato", current_osm_ids, _mn_status)
+
+    except Exception as exc:
+        print(f"[minato] fetch error: {exc}")
+    finally:
+        _mn_status["running"] = False
+        print(f"[minato] 完了: {_mn_status['inserted']} 件登録 / {_mn_status['deleted']} 件削除")
+
+
+@app.post("/api/sync/minato")
+def sync_minato():
+    if _mn_status["running"]:
+        return {"status": "already_running", **_mn_status}
+    threading.Thread(target=fetch_minato_parks, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/sync/minato/status")
+def minato_status():
+    return _mn_status
 
 
 @app.post("/api/visit", status_code=201)
