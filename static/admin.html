@@ -68,6 +68,8 @@
     }
     .src-item input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: #2E7D32; }
     .src-item.sub-opt { margin-left: 26px; font-size: 13px; color: #555; }
+    .src-link { font-size: 11px; color: #1565C0; text-decoration: none; margin-left: auto; white-space: nowrap; }
+    .src-link:hover { text-decoration: underline; }
 
     /* 進捗エリア */
     .prog-area { margin-top: 20px; border-top: 1px solid #E8F5E9; padding-top: 16px; display: flex; flex-direction: column; gap: 14px; }
@@ -127,22 +129,27 @@
       <label class="src-item">
         <input type="checkbox" class="water-src" value="shinjuku" checked>
         <span>🏙️ 新宿区（水遊び場）</span>
+        <a class="src-link" href="https://www.city.shinjuku.lg.jp/seikatsu/file15_03_00020.html" target="_blank" rel="noopener">出典↗</a>
       </label>
       <label class="src-item">
         <input type="checkbox" class="water-src" value="suginami" checked>
         <span>🏙️ 杉並区（流れのある公園）</span>
+        <a class="src-link" href="https://www.city.suginami.tokyo.jp/s100/1621.html" target="_blank" rel="noopener">出典↗</a>
       </label>
       <label class="src-item">
         <input type="checkbox" class="water-src" value="nerima" checked>
         <span>🏙️ 練馬区（水施設）</span>
+        <a class="src-link" href="https://www.city.nerima.tokyo.jp/kankomoyoshi/annai/fukei/nerima_park/kunai/mizusisetu.html" target="_blank" rel="noopener">出典↗</a>
       </label>
       <label class="src-item">
         <input type="checkbox" class="water-src" value="minato" checked>
         <span>🏙️ 港区（水遊び場）</span>
+        <a class="src-link" href="https://www.city.minato.tokyo.jp/shiba-koudobokutan/tosyouike.html" target="_blank" rel="noopener">出典↗</a>
       </label>
       <label class="src-item">
         <input type="checkbox" class="water-src" value="toritsu" checked>
         <span>🌳 都立公園（水遊び22件）</span>
+        <a class="src-link" href="https://www.kensetsu.metro.tokyo.lg.jp/park/kouenannai/mizu" target="_blank" rel="noopener">出典↗</a>
       </label>
       <label class="src-item sub-opt" id="toritsu-force-wrap">
         <input type="checkbox" id="toritsu-force-chk">
