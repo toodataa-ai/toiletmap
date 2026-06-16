@@ -58,19 +58,29 @@
     </div>
 
     <a href="map.html" class="top-btn">地図を開く →</a>
+    <a href="list.html" class="top-btn top-btn-sub">📋 公園一覧を見る</a>
     <a href="admin.html" class="top-admin-link">⚙ 管理画面</a>
   </div>
 
   <script>
     const SOURCE_LABELS = {
-      koentanbo: '探訪',
-      shinjuku:  '新宿区',
-      suginami:  '杉並区',
-      nerima:    '練馬区',
-      toritsu:   '都立',
-      minato:    '港区',
-      osm:       'OSM',
-      user:      'ユーザー',
+      koentanbo:  '探訪',
+      osm:        'OSM',
+      user:       'ユーザー',
+      toritsu:    '都立',
+      shinjuku:   '新宿区',
+      suginami:   '杉並区',
+      nerima:     '練馬区',
+      minato:     '港区',
+      ota:        '大田区',
+      setagaya:   '世田谷区',
+      taito:      '台東区',
+      bunkyo:     '文京区',
+      kita:       '北区',
+      arakawa:    '荒川区',
+      itabashi:   '板橋区',
+      adachi:     '足立区',
+      katsushika: '葛飾区',
     };
 
     fetch('/api/visit', { method: 'POST' }).catch(() => {});

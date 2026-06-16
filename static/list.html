@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>公園一覧 - 公園マップ 東京</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="list-page">
+
+  <header id="header">
+    <div id="header-left">
+      <a href="/" class="header-home" aria-label="トップへ">🏠</a>
+      <span class="header-icon">🌳</span>
+      <h1>公園一覧</h1>
+    </div>
+    <div id="header-right">
+      <a href="map.html" class="header-map-btn">🗺️ 地図</a>
+    </div>
+  </header>
+
+  <div class="list-wrap">
+
+    <!-- タブ -->
+    <div class="list-tabs">
+      <button class="list-tab active" data-tab="water">
+        💧 水遊び公園
+        <span class="tab-count" id="water-count"></span>
+      </button>
+      <button class="list-tab" data-tab="koentanbo">
+        🌿 探訪公園
+        <span class="tab-count" id="kb-count"></span>
+      </button>
+    </div>
+
+    <!-- 検索 -->
+    <div class="list-search-wrap">
+      <input type="search" id="list-search"
+             placeholder="公園名で絞り込み…" autocomplete="off" />
+    </div>
+
+    <!-- 水遊び公園ペイン -->
+    <div id="pane-water" class="list-pane">
+      <div id="water-content" class="list-loading-wrap">
+        <div class="spinner"></div>
+        <p>読み込み中…</p>
+      </div>
+    </div>
+
+    <!-- 探訪公園ペイン -->
+    <div id="pane-koentanbo" class="list-pane hidden">
+      <div id="kb-content" class="list-loading-wrap">
+        <div class="spinner"></div>
+        <p>読み込み中…</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const SOURCE_LABELS = {
+      toritsu:    '都立公園',
+      shinjuku:   '新宿区',
+      suginami:   '杉並区',
+      nerima:     '練馬区',
+      minato:     '港区',
+      ota:        '大田区',
+      setagaya:   '世田谷区',
+      taito:      '台東区',
+      bunkyo:     '文京区',
+      kita:       '北区',
+      arakawa:    '荒川区',
+      itabashi:   '板橋区',
+      adachi:     '足立区',
+      katsushika: '葛飾区',
+    };
+    const SOURCE_ORDER = [
+      'toritsu', 'shinjuku', 'suginami', 'nerima', 'minato',
+      'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
+      'itabashi', 'adachi', 'katsushika',
+    ];
+
+    let waterParks = [];
+    let kbParks    = [];
+    let activeTab  = 'water';
+    let query      = '';
+
+    // ── タブ切り替え ──────────────────────────────────────
+    document.querySelectorAll('.list-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeTab = btn.dataset.tab;
+        document.querySelectorAll('.list-tab').forEach(b => b.classList.toggle('active', b === btn));
+        document.getElementById('pane-water').classList.toggle('hidden', activeTab !== 'water');
+        document.getElementById('pane-koentanbo').classList.toggle('hidden', activeTab !== 'koentanbo');
+        renderActive();
+      });
+    });
+
+    // ── 検索 ─────────────────────────────────────────────
+    let searchTimer;
+    document.getElementById('list-search').addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        query = this.value.trim().toLowerCase();
+        renderActive();
+      }, 200);
+    });
+
+    function renderActive() {
+      if (activeTab === 'water') renderWater();
+      else renderKoentanbo();
+    }
+
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ── 水遊び公園 描画 ───────────────────────────────────
+    function renderWater() {
+      const filtered = waterParks.filter(p =>
+        !query || p.name.toLowerCase().includes(query)
+      );
+
+      const el = document.getElementById('water-content');
+      if (filtered.length === 0) {
+        el.innerHTML = '<div class="list-empty">該当する公園がありません</div>';
+        return;
+      }
+
+      // ソース別にグループ化
+      const grouped = {};
+      filtered.forEach(p => {
+        if (!grouped[p.source]) grouped[p.source] = [];
+        grouped[p.source].push(p);
+      });
+
+      // 表示順: SOURCE_ORDER の後、残りは source 名順
+      const sources = [
+        ...SOURCE_ORDER.filter(s => grouped[s]),
+        ...Object.keys(grouped).filter(s => !SOURCE_ORDER.includes(s)).sort(),
+      ];
+
+      let html = '';
+      sources.forEach(src => {
+        const parks = grouped[src];
+        const label = SOURCE_LABELS[src] || src;
+        html += `<div class="ward-section">
+          <div class="ward-header">
+            <span class="ward-label">${escHtml(label)}</span>
+            <span class="ward-count">${parks.length}件</span>
+          </div>
+          <ul class="park-list">`;
+        parks.forEach(p => {
+          const desc = p.description
+            ? `<span class="park-desc">${escHtml(p.description.split('\n')[0].replace(/^施設: /, ''))}</span>`
+            : '';
+          html += `<li>
+            <a href="map.html?park=${p.id}" class="park-row">
+              <div class="park-row-info">
+                <span class="park-name">${escHtml(p.name)}</span>
+                ${desc}
+              </div>
+              <span class="park-arrow">›</span>
+            </a>
+          </li>`;
+        });
+        html += '</ul></div>';
+      });
+      el.innerHTML = html;
+    }
+
+    // ── 探訪公園 描画（写真グリッド）────────────────────────
+    function renderKoentanbo() {
+      const filtered = kbParks.filter(p =>
+        !query || p.name.toLowerCase().includes(query)
+      );
+
+      const el = document.getElementById('kb-content');
+      if (filtered.length === 0) {
+        el.innerHTML = '<div class="list-empty">該当する公園がありません</div>';
+        return;
+      }
+
+      let html = `<p class="kb-note">${filtered.length.toLocaleString()}件（写真あり）</p><div class="kb-grid">`;
+      filtered.forEach(p => {
+        const thumb = p.photo_url
+          ? `<img src="${escHtml(p.photo_url)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('kb-no-photo')" />`
+          : '';
+        html += `<a href="map.html?park=${p.id}" class="kb-card">
+          <div class="kb-photo">${thumb || '<span class="kb-emoji">🌳</span>'}</div>
+          <div class="kb-name">${escHtml(p.name)}</div>
+        </a>`;
+      });
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
+    // ── データ取得 ────────────────────────────────────────
+    async function loadWater() {
+      try {
+        waterParks = await fetch('/api/parks/list?source=water').then(r => r.json());
+        document.getElementById('water-count').textContent = waterParks.length;
+        renderWater();
+      } catch {
+        document.getElementById('water-content').innerHTML =
+          '<div class="list-error">⚠️ データの取得に失敗しました</div>';
+      }
+    }
+
+    async function loadKoentanbo() {
+      try {
+        kbParks = await fetch('/api/parks/list?source=koentanbo&limit=500').then(r => r.json());
+        document.getElementById('kb-count').textContent = kbParks.length;
+        if (activeTab === 'koentanbo') renderKoentanbo();
+      } catch {
+        document.getElementById('kb-content').innerHTML =
+          '<div class="list-error">⚠️ データの取得に失敗しました</div>';
+      }
+    }
+
+    loadWater();
+    loadKoentanbo();
+  </script>
+</body>
+</html>

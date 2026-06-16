@@ -155,6 +155,51 @@
         <input type="checkbox" id="toritsu-force-chk">
         <span>↳ 座標も再取得する（全件）</span>
       </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="ota" checked>
+        <span>🏙️ 大田区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.ota.tokyo.jp/shisetsu/park/mizu-asobi.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="setagaya" checked>
+        <span>🏙️ 世田谷区（水辺のある公園）</span>
+        <a class="src-link" href="https://www.city.setagaya.lg.jp/02075/9197.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="taito" checked>
+        <span>🏙️ 台東区（水遊び施設）</span>
+        <a class="src-link" href="https://www.city.taito.lg.jp/kenchiku/hanamidori/koen/shokai/mizuasobi.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="bunkyo" checked>
+        <span>🏙️ 文京区（じゃぶじゃぶ池）</span>
+        <a class="src-link" href="https://www.city.bunkyo.lg.jp/b036/p004823.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="kita" checked>
+        <span>🏙️ 北区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.kita.lg.jp/parks/list/1009530.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="arakawa" checked>
+        <span>🏙️ 荒川区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.arakawa.tokyo.jp/a043/koen/koen/mizuasobikouen.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="itabashi" checked>
+        <span>🏙️ 板橋区（こどもの池）</span>
+        <a class="src-link" href="https://www.city.itabashi.tokyo.jp/bousai/kouen/kouen/1006629.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="adachi" checked>
+        <span>🏙️ 足立区（じゃぶじゃぶ池）</span>
+        <a class="src-link" href="https://www.city.adachi.tokyo.jp/k-iji/2025jabu-jabu-ike.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="katsushika" checked>
+        <span>🏙️ 葛飾区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.katsushika.lg.jp/planning/1003408/1003556.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
     </div>
 
     <button id="water-run-btn" class="btn btn-primary">▶ 選択したソースを取得</button>
@@ -190,6 +235,60 @@
         <div class="src-prog-label">🌳 都立公園 <span class="badge idle" id="wbg-toritsu">待機中</span></div>
         <div class="progress-wrap" id="wpw-toritsu"><div class="progress-fill" id="wpf-toritsu"></div></div>
         <div class="src-prog-detail" id="wpd-toritsu">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-ota" style="display:none">
+        <div class="src-prog-label">🏙️ 大田区 <span class="badge idle" id="wbg-ota">待機中</span></div>
+        <div class="progress-wrap" id="wpw-ota"><div class="progress-fill" id="wpf-ota"></div></div>
+        <div class="src-prog-detail" id="wpd-ota">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-setagaya" style="display:none">
+        <div class="src-prog-label">🏙️ 世田谷区 <span class="badge idle" id="wbg-setagaya">待機中</span></div>
+        <div class="progress-wrap" id="wpw-setagaya"><div class="progress-fill" id="wpf-setagaya"></div></div>
+        <div class="src-prog-detail" id="wpd-setagaya">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-taito" style="display:none">
+        <div class="src-prog-label">🏙️ 台東区 <span class="badge idle" id="wbg-taito">待機中</span></div>
+        <div class="progress-wrap" id="wpw-taito"><div class="progress-fill" id="wpf-taito"></div></div>
+        <div class="src-prog-detail" id="wpd-taito">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-bunkyo" style="display:none">
+        <div class="src-prog-label">🏙️ 文京区 <span class="badge idle" id="wbg-bunkyo">待機中</span></div>
+        <div class="progress-wrap" id="wpw-bunkyo"><div class="progress-fill" id="wpf-bunkyo"></div></div>
+        <div class="src-prog-detail" id="wpd-bunkyo">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-kita" style="display:none">
+        <div class="src-prog-label">🏙️ 北区 <span class="badge idle" id="wbg-kita">待機中</span></div>
+        <div class="progress-wrap" id="wpw-kita"><div class="progress-fill" id="wpf-kita"></div></div>
+        <div class="src-prog-detail" id="wpd-kita">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-arakawa" style="display:none">
+        <div class="src-prog-label">🏙️ 荒川区 <span class="badge idle" id="wbg-arakawa">待機中</span></div>
+        <div class="progress-wrap" id="wpw-arakawa"><div class="progress-fill" id="wpf-arakawa"></div></div>
+        <div class="src-prog-detail" id="wpd-arakawa">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-itabashi" style="display:none">
+        <div class="src-prog-label">🏙️ 板橋区 <span class="badge idle" id="wbg-itabashi">待機中</span></div>
+        <div class="progress-wrap" id="wpw-itabashi"><div class="progress-fill" id="wpf-itabashi"></div></div>
+        <div class="src-prog-detail" id="wpd-itabashi">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-adachi" style="display:none">
+        <div class="src-prog-label">🏙️ 足立区 <span class="badge idle" id="wbg-adachi">待機中</span></div>
+        <div class="progress-wrap" id="wpw-adachi"><div class="progress-fill" id="wpf-adachi"></div></div>
+        <div class="src-prog-detail" id="wpd-adachi">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-katsushika" style="display:none">
+        <div class="src-prog-label">🏙️ 葛飾区 <span class="badge idle" id="wbg-katsushika">待機中</span></div>
+        <div class="progress-wrap" id="wpw-katsushika"><div class="progress-fill" id="wpf-katsushika"></div></div>
+        <div class="src-prog-detail" id="wpd-katsushika">—</div>
       </div>
 
     </div>
@@ -295,11 +394,20 @@ document.getElementById('run-btn').addEventListener('click', async () => {
 
 // ── 水遊び公園 統合UI ─────────────────────────────────────────────────────────
 const WATER_SOURCES = {
-  shinjuku: { label: '新宿区', api: '/api/sync/shinjuku', status: '/api/sync/shinjuku/status' },
-  suginami: { label: '杉並区', api: '/api/sync/suginami', status: '/api/sync/suginami/status' },
-  nerima:   { label: '練馬区', api: '/api/sync/nerima',   status: '/api/sync/nerima/status'   },
-  minato:   { label: '港区',   api: '/api/sync/minato',   status: '/api/sync/minato/status'   },
-  toritsu:  { label: '都立公園', api: '/api/sync/toritsu', status: '/api/sync/toritsu/status' },
+  shinjuku:   { label: '新宿区',   api: '/api/sync/shinjuku',   status: '/api/sync/shinjuku/status'   },
+  suginami:   { label: '杉並区',   api: '/api/sync/suginami',   status: '/api/sync/suginami/status'   },
+  nerima:     { label: '練馬区',   api: '/api/sync/nerima',     status: '/api/sync/nerima/status'     },
+  minato:     { label: '港区',     api: '/api/sync/minato',     status: '/api/sync/minato/status'     },
+  toritsu:    { label: '都立公園', api: '/api/sync/toritsu',    status: '/api/sync/toritsu/status'    },
+  ota:        { label: '大田区',   api: '/api/sync/ota',        status: '/api/sync/ota/status'        },
+  setagaya:   { label: '世田谷区', api: '/api/sync/setagaya',   status: '/api/sync/setagaya/status'   },
+  taito:      { label: '台東区',   api: '/api/sync/taito',      status: '/api/sync/taito/status'      },
+  bunkyo:     { label: '文京区',   api: '/api/sync/bunkyo',     status: '/api/sync/bunkyo/status'     },
+  kita:       { label: '北区',     api: '/api/sync/kita',       status: '/api/sync/kita/status'       },
+  arakawa:    { label: '荒川区',   api: '/api/sync/arakawa',    status: '/api/sync/arakawa/status'    },
+  itabashi:   { label: '板橋区',   api: '/api/sync/itabashi',   status: '/api/sync/itabashi/status'   },
+  adachi:     { label: '足立区',   api: '/api/sync/adachi',     status: '/api/sync/adachi/status'     },
+  katsushika: { label: '葛飾区',   api: '/api/sync/katsushika', status: '/api/sync/katsushika/status' },
 };
 
 const waterPollers = {};

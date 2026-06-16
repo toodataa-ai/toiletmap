@@ -46,6 +46,15 @@ NERIMA_URL         = "https://www.city.nerima.tokyo.jp/kankomoyoshi/annai/fukei/
 TORITSU_URL        = "https://www.kensetsu.metro.tokyo.lg.jp/park/kouenannai/mizu"
 MINATO_URL         = "https://www.city.minato.tokyo.jp/shiba-koudobokutan/tosyouike.html"
 MINATO_BASE        = "https://www.city.minato.tokyo.jp"
+OTA_URL        = "https://www.city.ota.tokyo.jp/shisetsu/park/mizu-asobi.html"
+SETAGAYA_URL   = "https://www.city.setagaya.lg.jp/02075/9197.html"
+TAITO_URL      = "https://www.city.taito.lg.jp/kenchiku/hanamidori/koen/shokai/mizuasobi.html"
+BUNKYO_URL     = "https://www.city.bunkyo.lg.jp/b036/p004823.html"
+KITA_URL       = "https://www.city.kita.lg.jp/parks/list/1009530.html"
+ARAKAWA_URL    = "https://www.city.arakawa.tokyo.jp/a043/koen/koen/mizuasobikouen.html"
+ITABASHI_URL   = "https://www.city.itabashi.tokyo.jp/bousai/kouen/kouen/1006629.html"
+ADACHI_URL     = "https://www.city.adachi.tokyo.jp/k-iji/2025jabu-jabu-ike.html"
+KATSUSHIKA_URL = "https://www.city.katsushika.lg.jp/planning/1003408/1003556.html"
 
 # 都立公園22件の正確な座標（ジオコード失敗時のフォールバック）
 # 新規公園がサイトに追加された場合はここにない→自動ジオコードへフォールバック
@@ -87,7 +96,23 @@ _sj_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "del
 _sg_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _nm_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _tt_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
-_mn_status: dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_mn_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ot_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_sw_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ti_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_bk_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_kt_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ar_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ib_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ad_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ks_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+
+# 水遊び公園のソース一覧（/api/parks/water で使用）
+WATER_SOURCES = (
+    'shinjuku', 'suginami', 'nerima', 'minato', 'toritsu',
+    'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
+    'itabashi', 'adachi', 'katsushika',
+)
 
 
 # ── DB ヘルパー ───────────────────────────────────────────────────────────────
@@ -403,6 +428,23 @@ def add_park(body: ParkIn):
     return {"id": new_id}
 
 
+@app.get("/api/parks/water")
+def list_water_parks():
+    """水遊びができる公園の一覧を返す。"""
+    placeholders = ",".join(["%s"] * len(WATER_SOURCES))
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_q(f"""
+            SELECT p.id, p.lat, p.lon,
+                   COALESCE(p.name,'公園') AS name,
+                   p.source, p.description, p.source_url
+            FROM parks p
+            WHERE p.source IN ({placeholders})
+            ORDER BY p.source, p.name
+        """), WATER_SOURCES)
+        return _fetchall(cur)
+
+
 @app.get("/api/parks/search")
 def search_parks(q: str = Query("", min_length=1), limit: int = Query(20, le=50)):
     with get_db() as conn:
@@ -420,6 +462,45 @@ def search_parks(q: str = Query("", min_length=1), limit: int = Query(20, le=50)
             GROUP BY p.id
             ORDER BY p.name LIMIT %s
         """), (f"%{q}%", limit))
+        return _fetchall(cur)
+
+
+@app.get("/api/parks/list")
+def parks_list(
+    source: str = Query("water"),
+    limit: int = Query(500, le=2000),
+):
+    """一覧ページ用: 水遊び公園またはkoentanbo公園（写真あり）を返す。"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        if source == "water":
+            placeholders = ",".join(["%s"] * len(WATER_SOURCES))
+            cur.execute(_q(f"""
+                SELECT p.id, p.lat, p.lon,
+                       COALESCE(p.name,'公園') AS name,
+                       p.source, p.description, p.source_url,
+                       (SELECT ph.photo_url FROM park_photos ph
+                        WHERE ph.park_id = p.id ORDER BY ph.id LIMIT 1) AS photo_url
+                FROM parks p
+                WHERE p.source IN ({placeholders})
+                ORDER BY p.source, p.name
+                LIMIT %s
+            """), (*WATER_SOURCES, limit))
+        elif source == "koentanbo":
+            cur.execute(_q("""
+                SELECT p.id, p.lat, p.lon,
+                       COALESCE(p.name,'公園') AS name,
+                       p.source, p.description, p.source_url,
+                       (SELECT ph.photo_url FROM park_photos ph
+                        WHERE ph.park_id = p.id ORDER BY ph.id LIMIT 1) AS photo_url
+                FROM parks p
+                WHERE p.source = 'koentanbo'
+                  AND EXISTS (SELECT 1 FROM park_photos ph WHERE ph.park_id = p.id)
+                ORDER BY p.name
+                LIMIT %s
+            """), (limit,))
+        else:
+            raise HTTPException(status_code=400, detail="source は 'water' または 'koentanbo' を指定してください")
         return _fetchall(cur)
 
 
@@ -1348,6 +1429,317 @@ def sync_minato():
 @app.get("/api/sync/minato/status")
 def minato_status():
     return _mn_status
+
+
+# ── 追加区 水遊び公園 汎用スクレイパー ───────────────────────────────────────────
+
+def _build_full_address(addr_raw: str, ward_prefix: str) -> str:
+    """住所文字列に東京都・区名プレフィックスを補完する。"""
+    if not addr_raw:
+        return ward_prefix
+    if addr_raw.startswith("東京都"):
+        return addr_raw
+    ward_part = ward_prefix.replace("東京都", "")
+    if ward_part and addr_raw.startswith(ward_part):
+        return "東京都" + addr_raw
+    return ward_prefix + addr_raw
+
+
+def _fetch_generic_ward_parks(
+    source: str, url: str, status: dict,
+    ward_prefix: str,
+    name_col: int, addr_col: int = -1, desc_col: int = -1,
+    extra_skip: set | None = None,
+):
+    """汎用区水遊び公園スクレイパー（テーブル型ページ対応）。"""
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    skip_names = {"公園名", "園名", "実施場所", "施設名", "名称", "公園・児童遊園名",
+                  "No.", "番号", "住所", "所在地", "施設の種類", "特徴", "週休日"}
+    if extra_skip:
+        skip_names |= extra_skip
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(url, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        parks_data = []
+        seen: set[str] = set()
+
+        for table in soup.find_all("table"):
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                needed = name_col + 1
+                if addr_col >= 0:
+                    needed = max(needed, addr_col + 1)
+                if desc_col >= 0:
+                    needed = max(needed, desc_col + 1)
+                if len(cells) < needed:
+                    continue
+
+                name = cells[name_col].get_text(strip=True)
+                if not name or name in skip_names or re.match(r'^\d+$', name):
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+
+                addr_raw = cells[addr_col].get_text(strip=True) if 0 <= addr_col < len(cells) else ""
+                desc_raw = cells[desc_col].get_text(strip=True) if 0 <= desc_col < len(cells) else ""
+                if desc_raw in skip_names:
+                    desc_raw = ""
+
+                addr_full = _build_full_address(addr_raw, ward_prefix)
+                description = f"施設: {desc_raw}" if desc_raw else None
+                parks_data.append({"name": name, "address": addr_full, "description": description})
+
+        # テーブルがない場合: <li> タグからパーク名を抽出
+        if not parks_data:
+            main_area = soup.find(["main", "article"])
+            search_area = main_area or soup
+            for li in search_area.find_all("li"):
+                text = li.get_text(strip=True)
+                if ("公園" in text or "遊園" in text) and len(text) <= 40:
+                    name = re.sub(r'\s+', '', text)
+                    if name and name not in seen and name not in skip_names:
+                        seen.add(name)
+                        parks_data.append({"name": name, "address": ward_prefix, "description": None})
+
+        current_osm_ids = {
+            f"{source}_{re.sub(r'[\s/\\]', '_', p['name'])}"
+            for p in parks_data
+        }
+        status["total"] = len(parks_data)
+        print(f"[{source}] {len(parks_data)} 件発見")
+
+        now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+        for park in parks_data:
+            name = park["name"]
+            address = park["address"]
+            description = park["description"]
+            slug = re.sub(r"[\s/\\]", "_", name)
+            osm_id = f"{source}_{slug}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                if cur.fetchone():
+                    status["done"] += 1
+                    continue
+
+            coords = _geocode_park(name, address)
+            if not coords:
+                print(f"[{source}] geocode 失敗: {name} ({address})")
+                status["done"] += 1
+                continue
+            lat, lon = coords
+
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        _q(f"""INSERT INTO parks
+                               (osm_id, lat, lon, name, park_type, source, description, source_url,
+                                last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park',%s,%s,%s,{now_expr},{now_expr})
+                               ON CONFLICT (osm_id) DO NOTHING"""),
+                        (osm_id, lat, lon, name, source, description, url),
+                    )
+                    if cur.rowcount:
+                        status["inserted"] += 1
+                        print(f"[{source}] 登録: {name} ({lat:.5f},{lon:.5f})")
+            except Exception as exc:
+                print(f"[{source}] db error {name}: {exc}")
+            status["done"] += 1
+
+        _delete_removed_parks(source, current_osm_ids, status)
+
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+    finally:
+        status["running"] = False
+        print(f"[{source}] 完了: {status['inserted']} 件登録 / {status.get('deleted', 0)} 件削除")
+
+
+# ── 大田区 ────────────────────────────────────────────────────────────────────
+
+def fetch_ota_parks():
+    _fetch_generic_ward_parks(
+        'ota', OTA_URL, _ot_status,
+        ward_prefix="東京都大田区", name_col=0, addr_col=1, desc_col=2,
+    )
+
+@app.post("/api/sync/ota")
+def sync_ota():
+    if _ot_status["running"]:
+        return {"status": "already_running", **_ot_status}
+    threading.Thread(target=fetch_ota_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/ota/status")
+def ota_status():
+    return _ot_status
+
+
+# ── 世田谷区 ──────────────────────────────────────────────────────────────────
+
+def fetch_setagaya_parks():
+    _fetch_generic_ward_parks(
+        'setagaya', SETAGAYA_URL, _sw_status,
+        ward_prefix="東京都世田谷区", name_col=0, addr_col=1, desc_col=2,
+    )
+
+@app.post("/api/sync/setagaya")
+def sync_setagaya():
+    if _sw_status["running"]:
+        return {"status": "already_running", **_sw_status}
+    threading.Thread(target=fetch_setagaya_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/setagaya/status")
+def setagaya_status():
+    return _sw_status
+
+
+# ── 台東区 ────────────────────────────────────────────────────────────────────
+
+def fetch_taito_parks():
+    _fetch_generic_ward_parks(
+        'taito', TAITO_URL, _ti_status,
+        ward_prefix="東京都台東区", name_col=0, addr_col=1, desc_col=2,
+    )
+
+@app.post("/api/sync/taito")
+def sync_taito():
+    if _ti_status["running"]:
+        return {"status": "already_running", **_ti_status}
+    threading.Thread(target=fetch_taito_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/taito/status")
+def taito_status():
+    return _ti_status
+
+
+# ── 文京区 ────────────────────────────────────────────────────────────────────
+
+def fetch_bunkyo_parks():
+    _fetch_generic_ward_parks(
+        'bunkyo', BUNKYO_URL, _bk_status,
+        ward_prefix="東京都文京区", name_col=0, addr_col=1,
+    )
+
+@app.post("/api/sync/bunkyo")
+def sync_bunkyo():
+    if _bk_status["running"]:
+        return {"status": "already_running", **_bk_status}
+    threading.Thread(target=fetch_bunkyo_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/bunkyo/status")
+def bunkyo_status():
+    return _bk_status
+
+
+# ── 北区 ─────────────────────────────────────────────────────────────────────
+
+def fetch_kita_parks():
+    _fetch_generic_ward_parks(
+        'kita', KITA_URL, _kt_status,
+        ward_prefix="東京都北区", name_col=0, addr_col=-1,
+    )
+
+@app.post("/api/sync/kita")
+def sync_kita():
+    if _kt_status["running"]:
+        return {"status": "already_running", **_kt_status}
+    threading.Thread(target=fetch_kita_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/kita/status")
+def kita_status():
+    return _kt_status
+
+
+# ── 荒川区 ────────────────────────────────────────────────────────────────────
+
+def fetch_arakawa_parks():
+    _fetch_generic_ward_parks(
+        'arakawa', ARAKAWA_URL, _ar_status,
+        ward_prefix="東京都荒川区", name_col=0, addr_col=-1,
+    )
+
+@app.post("/api/sync/arakawa")
+def sync_arakawa():
+    if _ar_status["running"]:
+        return {"status": "already_running", **_ar_status}
+    threading.Thread(target=fetch_arakawa_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/arakawa/status")
+def arakawa_status():
+    return _ar_status
+
+
+# ── 板橋区 ────────────────────────────────────────────────────────────────────
+
+def fetch_itabashi_parks():
+    _fetch_generic_ward_parks(
+        'itabashi', ITABASHI_URL, _ib_status,
+        ward_prefix="東京都板橋区", name_col=1, addr_col=2,
+    )
+
+@app.post("/api/sync/itabashi")
+def sync_itabashi():
+    if _ib_status["running"]:
+        return {"status": "already_running", **_ib_status}
+    threading.Thread(target=fetch_itabashi_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/itabashi/status")
+def itabashi_status():
+    return _ib_status
+
+
+# ── 足立区 ────────────────────────────────────────────────────────────────────
+
+def fetch_adachi_parks():
+    _fetch_generic_ward_parks(
+        'adachi', ADACHI_URL, _ad_status,
+        ward_prefix="東京都足立区", name_col=0, addr_col=1, desc_col=3,
+    )
+
+@app.post("/api/sync/adachi")
+def sync_adachi():
+    if _ad_status["running"]:
+        return {"status": "already_running", **_ad_status}
+    threading.Thread(target=fetch_adachi_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/adachi/status")
+def adachi_status():
+    return _ad_status
+
+
+# ── 葛飾区 ────────────────────────────────────────────────────────────────────
+
+def fetch_katsushika_parks():
+    _fetch_generic_ward_parks(
+        'katsushika', KATSUSHIKA_URL, _ks_status,
+        ward_prefix="東京都葛飾区", name_col=0, addr_col=1,
+    )
+
+@app.post("/api/sync/katsushika")
+def sync_katsushika():
+    if _ks_status["running"]:
+        return {"status": "already_running", **_ks_status}
+    threading.Thread(target=fetch_katsushika_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/katsushika/status")
+def katsushika_status():
+    return _ks_status
 
 
 @app.post("/api/visit", status_code=201)

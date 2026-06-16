@@ -67,9 +67,15 @@ function makeStarIcon(color) {
   return L.divIcon({ html: svg, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
 }
 
+const WATER_PARK_SOURCES = new Set([
+  'shinjuku', 'suginami', 'nerima', 'toritsu', 'minato',
+  'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
+  'itabashi', 'adachi', 'katsushika',
+]);
+
 function markerIcon(parkType, photoCount, createdAt, source) {
   if (filterDate && createdAt && new Date(createdAt) >= filterDate) return makeIcon('#FF5722');
-  if (source === 'shinjuku' || source === 'suginami' || source === 'nerima' || source === 'toritsu' || source === 'minato') return makeStarIcon('#00BCD4');
+  if (WATER_PARK_SOURCES.has(source)) return makeStarIcon('#00BCD4');
   if (photoCount > 0)        return makeStarIcon('#E53935');
   if (parkType === 'park')   return makeIcon('#388E3C');
   return makeIcon('#4CAF50');
@@ -238,6 +244,11 @@ function renderPanel(p, photos) {
     } else if (p.source === 'minato') {
       let text = '💧 水遊びができる公園です（港区）';
       if (p.description) text += '\n・' + p.description;
+      descEl.textContent = text;
+      descEl.classList.remove('hidden');
+    } else if (WATER_PARK_SOURCES.has(p.source)) {
+      let text = '💧 水遊びができる公園です';
+      if (p.description) text += '\n・' + p.description.replace(/^施設: /, '');
       descEl.textContent = text;
       descEl.classList.remove('hidden');
     } else {
@@ -674,5 +685,17 @@ fetch('/api/stats').then(r => r.json()).then(d => {
   }
 }).catch(() => {});
 
+// ── URL パラメータ ?park=ID で特定公園を開く ──────────────────────────────────
+async function checkUrlParkParam() {
+  const id = new URLSearchParams(location.search).get('park');
+  if (!id) return;
+  try {
+    const p = await fetch(`/api/parks/${id}`).then(r => r.json());
+    map.setView([p.lat, p.lon], 17);
+    if (!markers.has(p.id)) addMarker(p);
+    openPanel(p.id);
+  } catch (e) {}
+}
+
 // ── 起動 ─────────────────────────────────────────────────────────────────────
-loadViewport();
+loadViewport().then(() => checkUrlParkParam()).catch(() => checkUrlParkParam());
