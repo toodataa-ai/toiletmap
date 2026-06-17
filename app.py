@@ -370,7 +370,7 @@ def list_parks(
         return _fetchall(cur)
 
 
-@app.get("/api/parks/{park_id}")
+@app.get("/api/parks/{park_id:int}")
 def get_park(park_id: int):
     with get_db() as conn:
         cur = conn.cursor()
