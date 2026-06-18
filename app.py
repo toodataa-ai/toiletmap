@@ -599,15 +599,23 @@ def _process_koentanbo_url(url: str, is_update: bool = False) -> bool:
         with get_db() as conn:
             cur = conn.cursor()
             if is_update:
-                # 基本情報を更新
+                # 既存レコードの id と住所を取得
+                cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
+                row = cur.fetchone()
+                existing_addr = (row[1] or "") if row else ""
+
+                # 住所が未設定または区名レベルなら GSI 逆ジオコードで補完
+                if not existing_addr or _is_ward_only_addr(existing_addr):
+                    new_addr = _reverse_geocode_gsi(lat, lon) or existing_addr
+                else:
+                    new_addr = existing_addr
+
                 cur.execute(
-                    _q(f"UPDATE parks SET lat=%s, lon=%s, name=%s, last_fetched={now}"
+                    _q(f"UPDATE parks SET lat=%s, lon=%s, name=%s, address=%s, last_fetched={now}"
                        " WHERE osm_id=%s"),
-                    (lat, lon, data["name"] or "公園", osm_id),
+                    (lat, lon, data["name"] or "公園", new_addr, osm_id),
                 )
                 # koentanbo 由来の写真だけ差し替え（ユーザー投稿は残す）
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                row = cur.fetchone()
                 if row:
                     park_id = row[0]
                     cur.execute(
@@ -621,11 +629,13 @@ def _process_koentanbo_url(url: str, is_update: bool = False) -> bool:
                             (park_id, photo_url, None),
                         )
             else:
+                # 新規: GSI 逆ジオコードで住所を取得して保存
+                new_addr = _reverse_geocode_gsi(lat, lon) or ""
                 cur.execute(
-                    _q(f"""INSERT INTO parks (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
-                          VALUES (%s,%s,%s,%s,'park','koentanbo',{now},{now})
+                    _q(f"""INSERT INTO parks (osm_id, lat, lon, name, address, park_type, source, last_fetched, created_at)
+                          VALUES (%s,%s,%s,%s,%s,'park','koentanbo',{now},{now})
                           ON CONFLICT (osm_id) DO NOTHING"""),
-                    (osm_id, lat, lon, data["name"] or "公園"),
+                    (osm_id, lat, lon, data["name"] or "公園", new_addr),
                 )
                 if cur.rowcount:
                     cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
@@ -715,6 +725,43 @@ def fetch_koentanbo_parks():
             if _kb_status["done"] % 200 == 0:
                 print(f"[koentanbo] {_kb_status['done']}/{_kb_status['total']} 件処理 "
                       f"({_kb_status['inserted']} 件登録/更新)")
+
+    # 住所が未設定のkoentanboパークを逆ジオコードで補完（最大300件）
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                _q("SELECT id, lat, lon FROM parks WHERE source='koentanbo'"
+                   " AND (address IS NULL OR address='') LIMIT 300")
+            )
+            missing_addr = cur.fetchall()
+        if missing_addr:
+            print(f"[koentanbo] 住所未設定 {len(missing_addr)} 件を逆ジオコード補完中...")
+            geocoded = 0
+
+            def _fill_addr(row):
+                pid, rlat, rlon = row
+                addr = _reverse_geocode_gsi(rlat, rlon)
+                if addr:
+                    try:
+                        with get_db() as conn2:
+                            cur2 = conn2.cursor()
+                            cur2.execute(
+                                _q("UPDATE parks SET address=%s WHERE id=%s AND (address IS NULL OR address='')"),
+                                (addr, pid),
+                            )
+                        return 1
+                    except Exception:
+                        pass
+                return 0
+
+            with ThreadPoolExecutor(max_workers=4) as pool2:
+                geocoded = sum(f.result() for f in as_completed(
+                    pool2.submit(_fill_addr, r) for r in missing_addr
+                ))
+            print(f"[koentanbo] 住所補完 {geocoded}/{len(missing_addr)} 件完了")
+    except Exception as exc:
+        print(f"[koentanbo] 住所補完エラー: {exc}")
 
     _kb_status["running"] = False
     print(f"[koentanbo] 完了: {_kb_status['inserted']} 件登録/更新")
@@ -869,27 +916,53 @@ def _geocode_gsi(address: str) -> tuple | None:
     return None
 
 
+def _reverse_geocode_nominatim(lat: float, lon: float) -> str:
+    """Nominatim 逆ジオコーディングで座標から住所文字列を取得。zoom=16 で丁目レベル。"""
+    try:
+        resp = _requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": lat, "lon": lon, "format": "json", "addressdetails": 1, "zoom": 16},
+            headers={"User-Agent": KOENTANBO_UA},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data and "address" in data:
+            return _extract_nominatim_addr(data["address"])
+    except Exception as exc:
+        print(f"[geocode/nominatim-reverse] error ({lat},{lon}): {exc}")
+    finally:
+        time.sleep(1.1)
+    return ""
+
+
 def _geocode_park(name: str, address: str = "") -> tuple | None:
     """住所付き Nominatim → 公園名のみ Nominatim → 国土地理院 → 住所Nominatim の順で試みる。
     住所を先に使うことで他都市の同名公園への誤ヒットを防ぐ。
     (lat, lon, geocoded_addr_str) を返す。geocoded_addr_str は Nominatim 由来の住所。"""
+    result = None
     if address:
         # 1. 公園名＋住所で Nominatim（他都市同名公園への誤ヒット防止のため優先）
         result = _geocode_nominatim(f"{name} {address}")
-        if result:
-            return result
-    # 2. 公園名のみで Nominatim
-    result = _geocode_nominatim(name)
+    if not result:
+        # 2. 公園名のみで Nominatim
+        result = _geocode_nominatim(name)
+    if not result and address:
+        # 3. 住所で国土地理院（制限なし・日本語住所に強い）
+        result = _geocode_gsi(address)
+    if not result and address:
+        # 4. 住所で Nominatim（最終手段）
+        result = _geocode_nominatim(address)
+
     if result:
-        return result
-    if not address:
-        return None
-    # 3. 住所で国土地理院（制限なし・日本語住所に強い）
-    result = _geocode_gsi(address)
-    if result:
-        return result
-    # 4. 住所で Nominatim（最終手段）
-    return _geocode_nominatim(address)
+        lat, lon, geocoded_addr = result
+        # 住所がまだ区名レベルなら Nominatim 逆ジオコードで最終補完
+        if not geocoded_addr or _is_ward_only_addr(geocoded_addr):
+            rev = _reverse_geocode_nominatim(lat, lon)
+            if rev and len(rev) > len(geocoded_addr or ""):
+                geocoded_addr = rev
+        return (lat, lon, geocoded_addr)
+    return None
 
 
 def _parse_shinjuku_park_detail(url: str) -> list:
