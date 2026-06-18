@@ -826,18 +826,20 @@ def _geocode_gsi(address: str) -> tuple | None:
 
 
 def _geocode_park(name: str, address: str = "") -> tuple | None:
-    """公園名優先で Nominatim → 公園名+住所Nominatim → 国土地理院 → 住所Nominatim の順で試みる。
+    """住所付き Nominatim → 公園名のみ Nominatim → 国土地理院 → 住所Nominatim の順で試みる。
+    住所を先に使うことで他都市の同名公園への誤ヒットを防ぐ。
     (lat, lon, geocoded_addr_str) を返す。geocoded_addr_str は Nominatim 由来の住所。"""
-    # 1. 公園名のみで Nominatim
+    if address:
+        # 1. 公園名＋住所で Nominatim（他都市同名公園への誤ヒット防止のため優先）
+        result = _geocode_nominatim(f"{name} {address}")
+        if result:
+            return result
+    # 2. 公園名のみで Nominatim
     result = _geocode_nominatim(name)
     if result:
         return result
     if not address:
         return None
-    # 2. 公園名＋住所で Nominatim（名前単独で失敗した場合の補完）
-    result = _geocode_nominatim(f"{name} {address}")
-    if result:
-        return result
     # 3. 住所で国土地理院（制限なし・日本語住所に強い）
     result = _geocode_gsi(address)
     if result:
@@ -1494,7 +1496,12 @@ def fetch_minato_parks():
 
             if row:
                 existing_id, existing_addr = row
-                if not existing_addr or _is_ward_only_addr(existing_addr):
+                needs_regeocode = (
+                    not existing_addr
+                    or _is_ward_only_addr(existing_addr)
+                    or not existing_addr.startswith("東京都")
+                )
+                if needs_regeocode:
                     result = _geocode_park(name, "東京都港区")
                     if result:
                         lat_r, lon_r, geocoded_addr = result
@@ -1572,8 +1579,10 @@ def _build_full_address(addr_raw: str, ward_prefix: str) -> str:
 _JUNK_PAT = re.compile(
     r'^\d+月'                       # 日付（6月4日、8月10日等）
     r'|です|ます|ください'           # 敬語文
-    r'|について|に関する'             # 説明文
+    r'|について|に関する|ですが|ので|ため'  # 説明文・接続助詞
     r'|ガーデナー|カレンダー|お知らせ|トイレ|整備|落書き'  # ナビリンク
+    r'|電話|FAX|ファックス|TEL|お問い合わせ|担当課|窓口'   # 連絡先情報
+    r'|^【'                         # 【終了】などのステータス表記
 )
 
 def _is_junk_name(name: str) -> bool:
@@ -1667,7 +1676,12 @@ def _fetch_generic_ward_parks(
 
             if row:
                 existing_id, existing_addr = row
-                if (not existing_addr or _is_ward_only_addr(existing_addr)) and address:
+                needs_regeocode = (
+                    not existing_addr
+                    or _is_ward_only_addr(existing_addr)
+                    or (existing_addr and not existing_addr.startswith("東京都"))
+                )
+                if needs_regeocode and address:
                     result = _geocode_park(name, address)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
@@ -1742,8 +1756,13 @@ def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
 
         if row:
             existing_id, existing_addr = row
-            # 住所が未設定または区名のみのレコードは再ジオコードして更新
-            if (not existing_addr or _is_ward_only_addr(existing_addr)) and address:
+            # 住所が未設定・区名のみ・東京都以外（誤ヒット）は再ジオコードして更新
+            needs_regeocode = (
+                not existing_addr
+                or _is_ward_only_addr(existing_addr)
+                or (existing_addr and not existing_addr.startswith("東京都"))
+            )
+            if needs_regeocode and address:
                 result = _geocode_park(name, address)
                 if result:
                     lat_r, lon_r, geocoded_addr = result
@@ -1961,7 +1980,12 @@ def fetch_kita_parks():
                 continue
             for name in text.split("、"):
                 name = re.sub(r"\s+", "", name)
-                if ("公園" in name or "遊園" in name) and 2 < len(name) <= 25 and name not in seen:
+                name = re.sub(r'^[・●▶□◆\s]+', '', name)   # 先頭の箇条書き記号を除去
+                name = re.sub(r'[はをがのにへもで]+$', '', name)  # 末尾の助詞を除去
+                # 公園名として終わる語（公園/遊園/池/広場等）に限定
+                if not any(name.endswith(kw) for kw in ("公園", "遊園", "池", "広場", "緑地")):
+                    continue
+                if 2 < len(name) <= 25 and name not in seen and not _is_junk_name(name):
                     seen.add(name)
                     parks_data.append({"name": name, "address": "東京都北区", "description": None})
         _sync_parks_data(source, KITA_URL, status, parks_data)
@@ -2250,7 +2274,7 @@ def fetch_meguro_parks():
             if _is_junk_name(name) or name in seen:
                 continue
             addr_part = m.group(2).strip()
-            addr = addr_part if addr_part.startswith("東京都") else "東京都目黒区" + addr_part
+            addr = _build_full_address(addr_part, "東京都目黒区")
             seen.add(name)
             parks_data.append({"name": name, "address": addr, "description": None})
     except Exception as exc:
@@ -2315,10 +2339,11 @@ def nakano_status():
 # ── 江戸川区 ──────────────────────────────────────────────────────────────────
 
 def fetch_edogawa_parks():
+    # テーブル列: 管内(0)|番号(1)|園名(2)|所在地(3)|規模(4)|形態(5)|清掃日(6)
     _fetch_generic_ward_parks(
         'edogawa', EDOGAWA_URL, _eg_status,
-        ward_prefix="東京都江戸川区", name_col=0, addr_col=1,
-        extra_skip={"園名", "所在地", "面積", "深さ", "備考"},
+        ward_prefix="東京都江戸川区", name_col=2, addr_col=3,
+        extra_skip={"管内", "番号", "園名", "所在地", "規模", "形態", "清掃日"},
     )
 
 @app.post("/api/sync/edogawa")
