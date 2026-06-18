@@ -1566,6 +1566,60 @@ def _fetch_generic_ward_parks(
         print(f"[{source}] 完了: {status['inserted']} 件登録 / {status.get('deleted', 0)} 件削除")
 
 
+def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
+    """parks_data のジオコーディング・DB登録・不要レコード削除を一括実行するヘルパー。"""
+    current_osm_ids = {
+        f"{source}_{re.sub(r'[\s/\\]', '_', p['name'])}"
+        for p in parks_data
+    }
+    status["total"] = len(parks_data)
+    print(f"[{source}] {len(parks_data)} 件発見")
+
+    now_expr = "CURRENT_TIMESTAMP" if USE_SQLITE else "NOW()"
+    for park in parks_data:
+        name = park["name"]
+        address = park.get("address", "")
+        description = park.get("description")
+        slug = re.sub(r"[\s/\\]", "_", name)
+        osm_id = f"{source}_{slug}"
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+            if cur.fetchone():
+                status["done"] += 1
+                continue
+
+        coords = _geocode_park(name, address)
+        if not coords:
+            print(f"[{source}] geocode 失敗: {name} ({address})")
+            status["done"] += 1
+            continue
+        lat, lon = coords
+
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    _q(f"""INSERT INTO parks
+                           (osm_id, lat, lon, name, park_type, source, description, source_url,
+                            address, last_fetched, created_at)
+                           VALUES (%s,%s,%s,%s,'park',%s,%s,%s,%s,{now_expr},{now_expr})
+                           ON CONFLICT (osm_id) DO NOTHING"""),
+                    (osm_id, lat, lon, name, source, description, url, address),
+                )
+                if cur.rowcount:
+                    status["inserted"] += 1
+                    print(f"[{source}] 登録: {name} ({lat:.5f},{lon:.5f})")
+        except Exception as exc:
+            print(f"[{source}] db error {name}: {exc}")
+        status["done"] += 1
+
+    _delete_removed_parks(source, current_osm_ids, status)
+    status["running"] = False
+    print(f"[{source}] 完了: {status['inserted']} 件登録 / {status.get('deleted', 0)} 件削除")
+
+
 # ── 大田区 ────────────────────────────────────────────────────────────────────
 
 def fetch_ota_parks():
@@ -1649,10 +1703,30 @@ def bunkyo_status():
 # ── 北区 ─────────────────────────────────────────────────────────────────────
 
 def fetch_kita_parks():
-    _fetch_generic_ward_parks(
-        'kita', KITA_URL, _kt_status,
-        ward_prefix="東京都北区", name_col=0, addr_col=-1,
-    )
+    """北区 - 公園名が p 要素内に '、' 区切りで記載されているため専用パーサー。"""
+    source, status = 'kita', _kt_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    try:
+        r = _requests.get(KITA_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        main = soup.find(["main", "article"]) or soup
+        for elem in main.find_all(["p", "dd", "li"]):
+            text = elem.get_text(strip=True)
+            if "、" not in text:
+                continue
+            for name in text.split("、"):
+                name = re.sub(r"\s+", "", name)
+                if ("公園" in name or "遊園" in name) and 2 < len(name) <= 25 and name not in seen:
+                    seen.add(name)
+                    parks_data.append({"name": name, "address": "東京都北区", "description": None})
+        _sync_parks_data(source, KITA_URL, status, parks_data)
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
 
 @app.post("/api/sync/kita")
 def sync_kita():
@@ -1669,10 +1743,29 @@ def kita_status():
 # ── 荒川区 ────────────────────────────────────────────────────────────────────
 
 def fetch_arakawa_parks():
-    _fetch_generic_ward_parks(
-        'arakawa', ARAKAWA_URL, _ar_status,
-        ward_prefix="東京都荒川区", name_col=0, addr_col=-1,
-    )
+    """荒川区 - 公園名が h3 見出しに '・' 区切りで記載されているため専用パーサー。"""
+    source, status = 'arakawa', _ar_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    try:
+        r = _requests.get(ARAKAWA_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        for h3 in soup.find_all("h3"):
+            text = re.sub(r"[（(].*?[）)]", "", h3.get_text(strip=True)).strip()
+            if "公園" not in text and "遊園" not in text:
+                continue
+            for name in re.split(r"[・]", text):
+                name = name.strip()
+                if name and name not in seen:
+                    seen.add(name)
+                    parks_data.append({"name": name, "address": "東京都荒川区", "description": None})
+        _sync_parks_data(source, ARAKAWA_URL, status, parks_data)
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
 
 @app.post("/api/sync/arakawa")
 def sync_arakawa():
