@@ -1597,10 +1597,25 @@ def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
 
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-            if cur.fetchone():
-                status["done"] += 1
-                continue
+            cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
+            row = cur.fetchone()
+
+        if row:
+            existing_id, existing_addr = row
+            # 住所が未設定のレコードは座標・住所を再ジオコードして更新
+            if not existing_addr and address:
+                coords = _geocode_park(name, address)
+                if coords:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                            (coords[0], coords[1], address, existing_id),
+                        )
+                    status["inserted"] += 1
+                    print(f"[{source}] 住所更新: {name} ({coords[0]:.5f},{coords[1]:.5f})")
+            status["done"] += 1
+            continue
 
         coords = _geocode_park(name, address)
         if not coords:
