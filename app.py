@@ -777,6 +777,11 @@ def _best_addr(source_addr: str, geocoded_addr: str) -> str:
     return geocoded_addr if len(geocoded_addr) > len(source_addr) else source_addr
 
 
+def _is_ward_only_addr(addr: str) -> bool:
+    """住所が都・区・市レベルのみで町丁目がない場合 True（例: 東京都荒川区）。"""
+    return bool(re.match(r'^東京都[\S]+[都区市]$', addr or ""))
+
+
 def _geocode_nominatim(q: str) -> tuple | None:
     """Nominatim で検索。(lat, lon, addr_str) または None を返す。"""
     result = None
@@ -1106,18 +1111,19 @@ def fetch_suginami_parks():
 
             if row:
                 existing_id, existing_addr = row
-                if not existing_addr and full_addr:
+                if (not existing_addr or _is_ward_only_addr(existing_addr)) and full_addr:
                     result = _geocode_park(name, full_addr)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
                         better = _best_addr(full_addr, geocoded_addr)
-                        with get_db() as conn:
-                            cur = conn.cursor()
-                            cur.execute(
-                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (lat_r, lon_r, better, existing_id),
-                            )
-                        print(f"[suginami] 住所更新: {name} → {better}")
+                        if better != existing_addr:
+                            with get_db() as conn:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                    (lat_r, lon_r, better, existing_id),
+                                )
+                            print(f"[suginami] 住所更新: {name} → {better}")
                 _sg_status["done"] += 1
                 continue
 
@@ -1245,18 +1251,19 @@ def fetch_nerima_parks():
 
             if row:
                 existing_id, existing_addr = row
-                if not existing_addr and full_addr:
+                if (not existing_addr or _is_ward_only_addr(existing_addr)) and full_addr:
                     result = _geocode_park(name, full_addr)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
                         better = _best_addr(full_addr, geocoded_addr)
-                        with get_db() as conn:
-                            cur = conn.cursor()
-                            cur.execute(
-                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (lat_r, lon_r, better, existing_id),
-                            )
-                        print(f"[nerima] 住所更新: {name} → {better}")
+                        if better != existing_addr:
+                            with get_db() as conn:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                    (lat_r, lon_r, better, existing_id),
+                                )
+                            print(f"[nerima] 住所更新: {name} → {better}")
                 _nm_status["done"] += 1
                 continue
 
@@ -1368,7 +1375,7 @@ def fetch_toritsu_parks(force: bool = False):
                 row = cur.fetchone()
                 if row:
                     existing_id, existing_addr = row
-                    if not force:
+                    if not force and existing_addr and not _is_ward_only_addr(existing_addr):
                         _tt_status["done"] += 1
                         continue
                 # osm_id なし → 同名の他ソースエントリを探して toritsu に更新
@@ -1486,18 +1493,19 @@ def fetch_minato_parks():
 
             if row:
                 existing_id, existing_addr = row
-                if not existing_addr:
+                if not existing_addr or _is_ward_only_addr(existing_addr):
                     result = _geocode_park(name, "東京都港区")
                     if result:
                         lat_r, lon_r, geocoded_addr = result
                         better = _best_addr("東京都港区", geocoded_addr)
-                        with get_db() as conn:
-                            cur = conn.cursor()
-                            cur.execute(
-                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (lat_r, lon_r, better, existing_id),
-                            )
-                        print(f"[minato] 住所更新: {name} → {better}")
+                        if better != existing_addr:
+                            with get_db() as conn:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                    (lat_r, lon_r, better, existing_id),
+                                )
+                            print(f"[minato] 住所更新: {name} → {better}")
                 _mn_status["done"] += 1
                 continue
 
@@ -1658,18 +1666,19 @@ def _fetch_generic_ward_parks(
 
             if row:
                 existing_id, existing_addr = row
-                if not existing_addr and address:
+                if (not existing_addr or _is_ward_only_addr(existing_addr)) and address:
                     result = _geocode_park(name, address)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
                         final_addr = _best_addr(address, geocoded_addr)
-                        with get_db() as conn:
-                            cur = conn.cursor()
-                            cur.execute(
-                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (lat_r, lon_r, final_addr, existing_id),
-                            )
-                        print(f"[{source}] 住所更新: {name} → {final_addr}")
+                        if final_addr != existing_addr:
+                            with get_db() as conn:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                    (lat_r, lon_r, final_addr, existing_id),
+                                )
+                            print(f"[{source}] 住所更新: {name} → {final_addr}")
                 status["done"] += 1
                 continue
 
@@ -1732,20 +1741,21 @@ def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
 
         if row:
             existing_id, existing_addr = row
-            # 住所が未設定のレコードは座標・住所を再ジオコードして更新
-            if not existing_addr and address:
+            # 住所が未設定または区名のみのレコードは再ジオコードして更新
+            if (not existing_addr or _is_ward_only_addr(existing_addr)) and address:
                 result = _geocode_park(name, address)
                 if result:
                     lat_r, lon_r, geocoded_addr = result
                     final_addr = _best_addr(address, geocoded_addr)
-                    with get_db() as conn:
-                        cur = conn.cursor()
-                        cur.execute(
-                            _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                            (lat_r, lon_r, final_addr, existing_id),
-                        )
-                    status["inserted"] += 1
-                    print(f"[{source}] 住所更新: {name} → {final_addr}")
+                    if final_addr != existing_addr:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                (lat_r, lon_r, final_addr, existing_id),
+                            )
+                        status["inserted"] += 1
+                        print(f"[{source}] 住所更新: {name} → {final_addr}")
             status["done"] += 1
             continue
 
