@@ -817,10 +817,17 @@ def _extract_nominatim_addr(addr_dict: dict) -> str:
 
 
 def _best_addr(source_addr: str, geocoded_addr: str) -> str:
-    """ソース住所とジオコード住所のうち、より具体的な方を返す。"""
+    """ソース住所とジオコード住所のうち、より具体的な方を返す。
+    不正住所（区名重複・ひらがな混入）は正常住所より長くても選ばない。"""
     if not source_addr:
         return geocoded_addr or ""
     if not geocoded_addr:
+        return source_addr
+    src_bad = _is_bad_addr(source_addr)
+    geo_bad = _is_bad_addr(geocoded_addr)
+    if src_bad and not geo_bad:
+        return geocoded_addr
+    if geo_bad and not src_bad:
         return source_addr
     return geocoded_addr if len(geocoded_addr) > len(source_addr) else source_addr
 
