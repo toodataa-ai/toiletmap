@@ -396,6 +396,7 @@ def get_park(park_id: int):
             SELECT p.id, p.osm_id, p.lat, p.lon,
                    COALESCE(p.name,'公園') AS name,
                    p.operator, p.park_type, p.source, p.description, p.source_url,
+                   p.address,
                    COUNT(ph.id) AS photo_count
             FROM parks p
             LEFT JOIN park_photos ph ON ph.park_id = p.id

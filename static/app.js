@@ -207,7 +207,8 @@ async function openPanel(id) {
 function renderPanel(p, photos) {
   document.getElementById('panel-name').textContent = p.name || '公園';
   const typeLabel = p.park_type === 'playground' ? '🛝 遊び場' : '🌳 公園';
-  const meta = [typeLabel, p.operator ? `管理: ${p.operator}` : ''].filter(Boolean).join('　');
+  const addrShort = p.address ? p.address.replace(/^東京都/, '') : '';
+  const meta = [typeLabel, addrShort, p.operator ? `管理: ${p.operator}` : ''].filter(Boolean).join('　');
   document.getElementById('panel-meta').textContent = meta;
 
   const descEl = document.getElementById('panel-source-desc');
