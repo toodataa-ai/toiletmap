@@ -200,6 +200,46 @@
         <span>🏙️ 葛飾区（水遊び公園）</span>
         <a class="src-link" href="https://www.city.katsushika.lg.jp/planning/1003408/1003556.html" target="_blank" rel="noopener">出典↗</a>
       </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="chiyoda" checked>
+        <span>🏙️ 千代田区（こどもの池・噴水）</span>
+        <a class="src-link" href="https://www.city.chiyoda.lg.jp/koho/machizukuri/koen/kodomonoike.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="sumida" checked>
+        <span>🏙️ 墨田区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.sumida.lg.jp/sisetu_info/kouen/riyou/mizushisetsu.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="koto" checked>
+        <span>🏙️ 江東区（じゃぶじゃぶ池）</span>
+        <a class="src-link" href="https://www.city.koto.lg.jp/470705/machizukuri/kasenkoen/annai/7483.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="shinagawa" checked>
+        <span>🏙️ 品川区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.shinagawa.tokyo.jp/PC/shisetsu/shisetsu-bunka/shisetsu-bunka-kouen/hpg000000346.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="meguro" checked>
+        <span>🏙️ 目黒区（じゃぶじゃぶ池）</span>
+        <a class="src-link" href="https://www.city.meguro.tokyo.jp/douro/shisetsu/sports/nagare-unten.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="shibuya" checked>
+        <span>🏙️ 渋谷区（親水施設）</span>
+        <a class="src-link" href="https://www.city.shibuya.tokyo.jp/shisetsu/koen/kuritsu-koen/shinsuishisetsu.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="nakano" checked>
+        <span>🏙️ 中野区（じゃぶじゃぶ池）</span>
+        <a class="src-link" href="https://www.city.tokyo-nakano.lg.jp/machizukuri/kouen/kouensiyou/jyabujyabuike.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="edogawa" checked>
+        <span>🏙️ 江戸川区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.edogawa.tokyo.jp/e066/kuseijoho/gaiyo/shisetsuguide/bunya/koendobutsuen/jabjab.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
     </div>
 
     <button id="water-run-btn" class="btn btn-primary">▶ 選択したソースを取得</button>
@@ -289,6 +329,54 @@
         <div class="src-prog-label">🏙️ 葛飾区 <span class="badge idle" id="wbg-katsushika">待機中</span></div>
         <div class="progress-wrap" id="wpw-katsushika"><div class="progress-fill" id="wpf-katsushika"></div></div>
         <div class="src-prog-detail" id="wpd-katsushika">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-chiyoda" style="display:none">
+        <div class="src-prog-label">🏙️ 千代田区 <span class="badge idle" id="wbg-chiyoda">待機中</span></div>
+        <div class="progress-wrap" id="wpw-chiyoda"><div class="progress-fill" id="wpf-chiyoda"></div></div>
+        <div class="src-prog-detail" id="wpd-chiyoda">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-sumida" style="display:none">
+        <div class="src-prog-label">🏙️ 墨田区 <span class="badge idle" id="wbg-sumida">待機中</span></div>
+        <div class="progress-wrap" id="wpw-sumida"><div class="progress-fill" id="wpf-sumida"></div></div>
+        <div class="src-prog-detail" id="wpd-sumida">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-koto" style="display:none">
+        <div class="src-prog-label">🏙️ 江東区 <span class="badge idle" id="wbg-koto">待機中</span></div>
+        <div class="progress-wrap" id="wpw-koto"><div class="progress-fill" id="wpf-koto"></div></div>
+        <div class="src-prog-detail" id="wpd-koto">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-shinagawa" style="display:none">
+        <div class="src-prog-label">🏙️ 品川区 <span class="badge idle" id="wbg-shinagawa">待機中</span></div>
+        <div class="progress-wrap" id="wpw-shinagawa"><div class="progress-fill" id="wpf-shinagawa"></div></div>
+        <div class="src-prog-detail" id="wpd-shinagawa">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-meguro" style="display:none">
+        <div class="src-prog-label">🏙️ 目黒区 <span class="badge idle" id="wbg-meguro">待機中</span></div>
+        <div class="progress-wrap" id="wpw-meguro"><div class="progress-fill" id="wpf-meguro"></div></div>
+        <div class="src-prog-detail" id="wpd-meguro">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-shibuya" style="display:none">
+        <div class="src-prog-label">🏙️ 渋谷区 <span class="badge idle" id="wbg-shibuya">待機中</span></div>
+        <div class="progress-wrap" id="wpw-shibuya"><div class="progress-fill" id="wpf-shibuya"></div></div>
+        <div class="src-prog-detail" id="wpd-shibuya">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-nakano" style="display:none">
+        <div class="src-prog-label">🏙️ 中野区 <span class="badge idle" id="wbg-nakano">待機中</span></div>
+        <div class="progress-wrap" id="wpw-nakano"><div class="progress-fill" id="wpf-nakano"></div></div>
+        <div class="src-prog-detail" id="wpd-nakano">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-edogawa" style="display:none">
+        <div class="src-prog-label">🏙️ 江戸川区 <span class="badge idle" id="wbg-edogawa">待機中</span></div>
+        <div class="progress-wrap" id="wpw-edogawa"><div class="progress-fill" id="wpf-edogawa"></div></div>
+        <div class="src-prog-detail" id="wpd-edogawa">—</div>
       </div>
 
     </div>
@@ -408,6 +496,14 @@ const WATER_SOURCES = {
   itabashi:   { label: '板橋区',   api: '/api/sync/itabashi',   status: '/api/sync/itabashi/status'   },
   adachi:     { label: '足立区',   api: '/api/sync/adachi',     status: '/api/sync/adachi/status'     },
   katsushika: { label: '葛飾区',   api: '/api/sync/katsushika', status: '/api/sync/katsushika/status' },
+  chiyoda:    { label: '千代田区', api: '/api/sync/chiyoda',    status: '/api/sync/chiyoda/status'    },
+  sumida:     { label: '墨田区',   api: '/api/sync/sumida',     status: '/api/sync/sumida/status'     },
+  koto:       { label: '江東区',   api: '/api/sync/koto',       status: '/api/sync/koto/status'       },
+  shinagawa:  { label: '品川区',   api: '/api/sync/shinagawa',  status: '/api/sync/shinagawa/status'  },
+  meguro:     { label: '目黒区',   api: '/api/sync/meguro',     status: '/api/sync/meguro/status'     },
+  shibuya:    { label: '渋谷区',   api: '/api/sync/shibuya',    status: '/api/sync/shibuya/status'    },
+  nakano:     { label: '中野区',   api: '/api/sync/nakano',     status: '/api/sync/nakano/status'     },
+  edogawa:    { label: '江戸川区', api: '/api/sync/edogawa',    status: '/api/sync/edogawa/status'    },
 };
 
 const waterPollers = {};

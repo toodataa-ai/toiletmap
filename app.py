@@ -55,6 +55,14 @@ ARAKAWA_URL    = "https://www.city.arakawa.tokyo.jp/a043/koen/koen/mizuasobikoue
 ITABASHI_URL   = "https://www.city.itabashi.tokyo.jp/bousai/kouen/kouen/1006629.html"
 ADACHI_URL     = "https://www.city.adachi.tokyo.jp/k-iji/2025jabu-jabu-ike.html"
 KATSUSHIKA_URL = "https://www.city.katsushika.lg.jp/planning/1003408/1003556.html"
+CHIYODA_URL  = "https://www.city.chiyoda.lg.jp/koho/machizukuri/koen/kodomonoike.html"
+SUMIDA_URL   = "https://www.city.sumida.lg.jp/sisetu_info/kouen/riyou/mizushisetsu.html"
+KOTO_URL     = "https://www.city.koto.lg.jp/470705/machizukuri/kasenkoen/annai/7483.html"
+SHINAGAWA_URL = "https://www.city.shinagawa.tokyo.jp/PC/shisetsu/shisetsu-bunka/shisetsu-bunka-kouen/hpg000000346.html"
+MEGURO_URL   = "https://www.city.meguro.tokyo.jp/douro/shisetsu/sports/nagare-unten.html"
+SHIBUYA_URL  = "https://www.city.shibuya.tokyo.jp/shisetsu/koen/kuritsu-koen/shinsuishisetsu.html"
+NAKANO_URL   = "https://www.city.tokyo-nakano.lg.jp/machizukuri/kouen/kouensiyou/jyabujyabuike.html"
+EDOGAWA_URL  = "https://www.city.edogawa.tokyo.jp/e066/kuseijoho/gaiyo/shisetsuguide/bunya/koendobutsuen/jabjab.html"
 
 # 都立公園22件の正確な座標（ジオコード失敗時のフォールバック）
 # 新規公園がサイトに追加された場合はここにない→自動ジオコードへフォールバック
@@ -106,12 +114,21 @@ _ar_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "de
 _ib_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _ad_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _ks_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_cd_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_sm_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ko_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_sn_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_mg_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_sb_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_nk_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_eg_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 
 # 水遊び公園のソース一覧（/api/parks/water で使用）
 WATER_SOURCES = (
     'shinjuku', 'suginami', 'nerima', 'minato', 'toritsu',
     'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
     'itabashi', 'adachi', 'katsushika',
+    'chiyoda', 'sumida', 'koto', 'shinagawa', 'meguro', 'shibuya', 'nakano', 'edogawa',
 )
 
 
@@ -1968,6 +1985,225 @@ def sync_katsushika():
 @app.get("/api/sync/katsushika/status")
 def katsushika_status():
     return _ks_status
+
+
+# ── 千代田区 ──────────────────────────────────────────────────────────────────
+
+def fetch_chiyoda_parks():
+    """千代田区 - li要素に「公園名（住所）」形式で記載されているため専用パーサー。"""
+    source = 'chiyoda'
+    status = _cd_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(CHIYODA_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        main_area = soup.find(["main", "article"]) or soup
+        for li in main_area.find_all("li"):
+            raw = li.get_text(strip=True)
+            m = re.match(r'^(.+?)[（(]([^）)]+)[）)]', raw)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if not any(kw in name for kw in ("公園", "遊園", "池", "広場")):
+                continue
+            if _is_junk_name(name) or name in seen:
+                continue
+            addr = "東京都千代田区" + m.group(2).strip()
+            seen.add(name)
+            parks_data.append({"name": name, "address": addr, "description": None})
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
+        return
+    _sync_parks_data(source, CHIYODA_URL, status, parks_data)
+
+@app.post("/api/sync/chiyoda")
+def sync_chiyoda():
+    if _cd_status["running"]:
+        return {"status": "already_running", **_cd_status}
+    threading.Thread(target=fetch_chiyoda_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/chiyoda/status")
+def chiyoda_status():
+    return _cd_status
+
+
+# ── 墨田区 ────────────────────────────────────────────────────────────────────
+
+def fetch_sumida_parks():
+    _fetch_generic_ward_parks(
+        'sumida', SUMIDA_URL, _sm_status,
+        ward_prefix="東京都墨田区", name_col=0, addr_col=1,
+        extra_skip={"所在地", "面積", "深さ", "備考"},
+    )
+
+@app.post("/api/sync/sumida")
+def sync_sumida():
+    if _sm_status["running"]:
+        return {"status": "already_running", **_sm_status}
+    threading.Thread(target=fetch_sumida_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/sumida/status")
+def sumida_status():
+    return _sm_status
+
+
+# ── 江東区 ────────────────────────────────────────────────────────────────────
+
+def fetch_koto_parks():
+    _fetch_generic_ward_parks(
+        'koto', KOTO_URL, _ko_status,
+        ward_prefix="東京都江東区", name_col=0, addr_col=1,
+        extra_skip={"住所", "面積", "深さ", "備考"},
+    )
+
+@app.post("/api/sync/koto")
+def sync_koto():
+    if _ko_status["running"]:
+        return {"status": "already_running", **_ko_status}
+    threading.Thread(target=fetch_koto_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/koto/status")
+def koto_status():
+    return _ko_status
+
+
+# ── 品川区 ────────────────────────────────────────────────────────────────────
+
+def fetch_shinagawa_parks():
+    _fetch_generic_ward_parks(
+        'shinagawa', SHINAGAWA_URL, _sn_status,
+        ward_prefix="東京都品川区", name_col=0,
+    )
+
+@app.post("/api/sync/shinagawa")
+def sync_shinagawa():
+    if _sn_status["running"]:
+        return {"status": "already_running", **_sn_status}
+    threading.Thread(target=fetch_shinagawa_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/shinagawa/status")
+def shinagawa_status():
+    return _sn_status
+
+
+# ── 目黒区 ────────────────────────────────────────────────────────────────────
+
+def fetch_meguro_parks():
+    """目黒区 - li要素内の<a>テキストが公園名、括弧内が住所。"""
+    source = 'meguro'
+    status = _mg_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(MEGURO_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        main_area = soup.find(["main", "article"]) or soup
+        for li in main_area.find_all("li"):
+            raw = li.get_text(strip=True)
+            m = re.match(r'^(.+?)[（(]([^）)]+)[）)]', raw)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if not any(kw in name for kw in ("公園", "遊園", "広場", "池")):
+                continue
+            if _is_junk_name(name) or name in seen:
+                continue
+            addr_part = m.group(2).strip()
+            addr = addr_part if addr_part.startswith("東京都") else "東京都目黒区" + addr_part
+            seen.add(name)
+            parks_data.append({"name": name, "address": addr, "description": None})
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
+        return
+    _sync_parks_data(source, MEGURO_URL, status, parks_data)
+
+@app.post("/api/sync/meguro")
+def sync_meguro():
+    if _mg_status["running"]:
+        return {"status": "already_running", **_mg_status}
+    threading.Thread(target=fetch_meguro_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/meguro/status")
+def meguro_status():
+    return _mg_status
+
+
+# ── 渋谷区 ────────────────────────────────────────────────────────────────────
+
+def fetch_shibuya_parks():
+    _fetch_generic_ward_parks(
+        'shibuya', SHIBUYA_URL, _sb_status,
+        ward_prefix="東京都渋谷区", name_col=0,
+    )
+
+@app.post("/api/sync/shibuya")
+def sync_shibuya():
+    if _sb_status["running"]:
+        return {"status": "already_running", **_sb_status}
+    threading.Thread(target=fetch_shibuya_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/shibuya/status")
+def shibuya_status():
+    return _sb_status
+
+
+# ── 中野区 ────────────────────────────────────────────────────────────────────
+
+def fetch_nakano_parks():
+    _fetch_generic_ward_parks(
+        'nakano', NAKANO_URL, _nk_status,
+        ward_prefix="東京都中野区", name_col=0, addr_col=1,
+        extra_skip={"所在地", "池の面積", "池の深さ", "備考"},
+    )
+
+@app.post("/api/sync/nakano")
+def sync_nakano():
+    if _nk_status["running"]:
+        return {"status": "already_running", **_nk_status}
+    threading.Thread(target=fetch_nakano_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/nakano/status")
+def nakano_status():
+    return _nk_status
+
+
+# ── 江戸川区 ──────────────────────────────────────────────────────────────────
+
+def fetch_edogawa_parks():
+    _fetch_generic_ward_parks(
+        'edogawa', EDOGAWA_URL, _eg_status,
+        ward_prefix="東京都江戸川区", name_col=0, addr_col=1,
+        extra_skip={"園名", "所在地", "面積", "深さ", "備考"},
+    )
+
+@app.post("/api/sync/edogawa")
+def sync_edogawa():
+    if _eg_status["running"]:
+        return {"status": "already_running", **_eg_status}
+    threading.Thread(target=fetch_edogawa_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/edogawa/status")
+def edogawa_status():
+    return _eg_status
 
 
 @app.post("/api/visit", status_code=201)
