@@ -783,6 +783,20 @@ def _is_ward_only_addr(addr: str) -> bool:
     return bool(re.match(r'^東京都[\S]+[都区市]$', addr or ""))
 
 
+def _is_bad_addr(addr: str) -> bool:
+    """住所として不正なパターンを検出する（区名重複・ひらがな混入等）。
+    再ジオコードが必要な異常住所の場合 True を返す。"""
+    if not addr:
+        return False
+    # 区名が2回以上出現（目黒区目黒区、世田谷区高津区 等の誤ジオコード）
+    if len(re.findall(r'\S+区', addr)) >= 2:
+        return True
+    # 4文字以上のひらがな連続（読み仮名が住所に混入: ふすまちょうこうえん 等）
+    if re.search(r'[ぁ-ん]{4,}', addr):
+        return True
+    return False
+
+
 def _reverse_geocode_gsi(lat: float, lon: float) -> str:
     """国土地理院 逆ジオコーダーで座標から日本語住所文字列を取得。
     Nominatim が区名レベルしか返せない場合の補完に使用する。"""
@@ -802,6 +816,8 @@ def _reverse_geocode_gsi(lat: float, lon: float) -> str:
             return ("東京都" + lv01) if muni_cd.startswith("13") else lv01
     except Exception as exc:
         print(f"[geocode/gsi-reverse] error ({lat},{lon}): {exc}")
+    finally:
+        time.sleep(0.5)
     return ""
 
 
@@ -1142,7 +1158,7 @@ def fetch_suginami_parks():
 
             if row:
                 existing_id, existing_addr = row
-                if (not existing_addr or _is_ward_only_addr(existing_addr)) and full_addr:
+                if (not existing_addr or _is_ward_only_addr(existing_addr) or _is_bad_addr(existing_addr)) and full_addr:
                     result = _geocode_park(name, full_addr)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
@@ -1282,7 +1298,7 @@ def fetch_nerima_parks():
 
             if row:
                 existing_id, existing_addr = row
-                if (not existing_addr or _is_ward_only_addr(existing_addr)) and full_addr:
+                if (not existing_addr or _is_ward_only_addr(existing_addr) or _is_bad_addr(existing_addr)) and full_addr:
                     result = _geocode_park(name, full_addr)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
@@ -1527,6 +1543,7 @@ def fetch_minato_parks():
                 needs_regeocode = (
                     not existing_addr
                     or _is_ward_only_addr(existing_addr)
+                    or _is_bad_addr(existing_addr)
                     or not existing_addr.startswith("東京都")
                 )
                 if needs_regeocode:
@@ -1611,6 +1628,7 @@ _JUNK_PAT = re.compile(
     r'|ガーデナー|カレンダー|お知らせ|トイレ|整備|落書き'  # ナビリンク
     r'|電話|FAX|ファックス|TEL|お問い合わせ|担当課|窓口'   # 連絡先情報
     r'|公衆便所'                     # 便所設備名
+    r'|施設[・\s]*公園'              # "文化・スポーツ施設・公園" 等のパンくずリンク
     r'|^【'                         # 【終了】などのステータス表記
 )
 
@@ -1629,7 +1647,8 @@ def _fetch_generic_ward_parks(
     status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
     skip_names = {"公園名", "園名", "実施場所", "施設名", "名称", "公園・児童遊園名",
                   "No.", "番号", "住所", "所在地", "施設の種類", "特徴", "週休日",
-                  "みどり・公園", "区立公園", "都立公園", "市立公園"}
+                  "みどり・公園", "区立公園", "都立公園", "市立公園",
+                  "公園", "緑地", "広場", "池"}
     if extra_skip:
         skip_names |= extra_skip
     headers = {"User-Agent": KOENTANBO_UA}
@@ -1712,6 +1731,7 @@ def _fetch_generic_ward_parks(
                 needs_regeocode = (
                     not existing_addr
                     or _is_ward_only_addr(existing_addr)
+                    or _is_bad_addr(existing_addr)
                     or (existing_addr and not existing_addr.startswith("東京都"))
                 )
                 if needs_regeocode and address:
@@ -1793,6 +1813,7 @@ def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
             needs_regeocode = (
                 not existing_addr
                 or _is_ward_only_addr(existing_addr)
+                or _is_bad_addr(existing_addr)
                 or (existing_addr and not existing_addr.startswith("東京都"))
             )
             if needs_regeocode and address:

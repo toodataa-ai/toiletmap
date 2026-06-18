@@ -226,7 +226,7 @@
 
     async function loadKoentanbo() {
       try {
-        const r = await fetch('/api/parks/list?source=koentanbo&limit=500');
+        const r = await fetch('/api/parks/list?source=koentanbo&limit=2000');
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         kbParks = await r.json();
         document.getElementById('kb-count').textContent = kbParks.length;
