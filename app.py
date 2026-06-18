@@ -228,6 +228,7 @@ def init_db():
             "ALTER TABLE park_photos ADD COLUMN photo_source TEXT",
             "ALTER TABLE parks ADD COLUMN description TEXT",
             "ALTER TABLE parks ADD COLUMN source_url TEXT",
+            "ALTER TABLE parks ADD COLUMN address TEXT",
         ]:
             if USE_SQLITE:
                 try:
@@ -478,7 +479,7 @@ def parks_list(
             cur.execute(_q(f"""
                 SELECT p.id, p.lat, p.lon,
                        COALESCE(p.name,'公園') AS name,
-                       p.source, p.description, p.source_url,
+                       p.source, p.description, p.source_url, p.address,
                        (SELECT ph.photo_url FROM park_photos ph
                         WHERE ph.park_id = p.id ORDER BY ph.id LIMIT 1) AS photo_url
                 FROM parks p
@@ -490,7 +491,7 @@ def parks_list(
             cur.execute(_q("""
                 SELECT p.id, p.lat, p.lon,
                        COALESCE(p.name,'公園') AS name,
-                       p.source, p.description, p.source_url,
+                       p.source, p.description, p.source_url, p.address,
                        (SELECT ph.photo_url FROM park_photos ph
                         WHERE ph.park_id = p.id ORDER BY ph.id LIMIT 1) AS photo_url
                 FROM parks p
@@ -1544,10 +1545,10 @@ def _fetch_generic_ward_parks(
                     cur.execute(
                         _q(f"""INSERT INTO parks
                                (osm_id, lat, lon, name, park_type, source, description, source_url,
-                                last_fetched, created_at)
-                               VALUES (%s,%s,%s,%s,'park',%s,%s,%s,{now_expr},{now_expr})
+                                address, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park',%s,%s,%s,%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, source, description, url),
+                        (osm_id, lat, lon, name, source, description, url, address),
                     )
                     if cur.rowcount:
                         status["inserted"] += 1

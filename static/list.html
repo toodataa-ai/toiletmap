@@ -36,7 +36,7 @@
     <!-- 検索 -->
     <div class="list-search-wrap">
       <input type="search" id="list-search"
-             placeholder="公園名で絞り込み…" autocomplete="off" />
+             placeholder="公園名・住所で絞り込み…" autocomplete="off" />
     </div>
 
     <!-- 水遊び公園ペイン -->
@@ -73,12 +73,8 @@
       itabashi:   '板橋区',
       adachi:     '足立区',
       katsushika: '葛飾区',
+      koentanbo:  '探訪',
     };
-    const SOURCE_ORDER = [
-      'toritsu', 'shinjuku', 'suginami', 'nerima', 'minato',
-      'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
-      'itabashi', 'adachi', 'katsushika',
-    ];
 
     let waterParks = [];
     let kbParks    = [];
@@ -112,15 +108,17 @@
     }
 
     function escHtml(s) {
-      return String(s)
+      return String(s ?? '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    // ── 水遊び公園 描画 ───────────────────────────────────
+    // ── 水遊び公園 テーブル描画 ──────────────────────────────
     function renderWater() {
-      const filtered = waterParks.filter(p =>
-        !query || p.name.toLowerCase().includes(query)
-      );
+      const filtered = waterParks.filter(p => {
+        if (!query) return true;
+        return p.name.toLowerCase().includes(query) ||
+               (p.address || '').toLowerCase().includes(query);
+      });
 
       const el = document.getElementById('water-content');
       if (filtered.length === 0) {
@@ -128,49 +126,38 @@
         return;
       }
 
-      // ソース別にグループ化
-      const grouped = {};
+      let html = `
+        <div class="table-wrap">
+          <table class="park-table">
+            <thead>
+              <tr>
+                <th>種類</th>
+                <th>区名</th>
+                <th>公園名</th>
+                <th>住所</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
       filtered.forEach(p => {
-        if (!grouped[p.source]) grouped[p.source] = [];
-        grouped[p.source].push(p);
+        const ward  = escHtml(SOURCE_LABELS[p.source] || p.source);
+        const addr  = escHtml(p.address || '');
+        const addrShort = (p.address || '').replace(/^東京都/, '');
+        html += `<tr>
+          <td><span class="type-badge water">💧水遊び</span></td>
+          <td class="cell-ward">${ward}</td>
+          <td class="cell-name">
+            <a href="map.html?park=${p.id}" class="park-link">${escHtml(p.name)}</a>
+          </td>
+          <td class="cell-addr" title="${addr}">${escHtml(addrShort)}</td>
+        </tr>`;
       });
 
-      // 表示順: SOURCE_ORDER の後、残りは source 名順
-      const sources = [
-        ...SOURCE_ORDER.filter(s => grouped[s]),
-        ...Object.keys(grouped).filter(s => !SOURCE_ORDER.includes(s)).sort(),
-      ];
-
-      let html = '';
-      sources.forEach(src => {
-        const parks = grouped[src];
-        const label = SOURCE_LABELS[src] || src;
-        html += `<div class="ward-section">
-          <div class="ward-header">
-            <span class="ward-label">${escHtml(label)}</span>
-            <span class="ward-count">${parks.length}件</span>
-          </div>
-          <ul class="park-list">`;
-        parks.forEach(p => {
-          const desc = p.description
-            ? `<span class="park-desc">${escHtml(p.description.split('\n')[0].replace(/^施設: /, ''))}</span>`
-            : '';
-          html += `<li>
-            <a href="map.html?park=${p.id}" class="park-row">
-              <div class="park-row-info">
-                <span class="park-name">${escHtml(p.name)}</span>
-                ${desc}
-              </div>
-              <span class="park-arrow">›</span>
-            </a>
-          </li>`;
-        });
-        html += '</ul></div>';
-      });
+      html += '</tbody></table></div>';
       el.innerHTML = html;
     }
 
-    // ── 探訪公園 描画（写真グリッド）────────────────────────
+    // ── 探訪公園 テーブル描画 ────────────────────────────────
     function renderKoentanbo() {
       const filtered = kbParks.filter(p =>
         !query || p.name.toLowerCase().includes(query)
@@ -182,40 +169,63 @@
         return;
       }
 
-      let html = `<p class="kb-note">${filtered.length.toLocaleString()}件（写真あり）</p><div class="kb-grid">`;
+      let html = `
+        <div class="table-wrap">
+          <table class="park-table">
+            <thead>
+              <tr>
+                <th>種類</th>
+                <th>区名</th>
+                <th>公園名</th>
+                <th>住所</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
       filtered.forEach(p => {
+        const ward = escHtml(SOURCE_LABELS[p.source] || p.source);
+        const addr = escHtml((p.address || '').replace(/^東京都/, ''));
         const thumb = p.photo_url
-          ? `<img src="${escHtml(p.photo_url)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('kb-no-photo')" />`
+          ? `<img src="${escHtml(p.photo_url)}" alt="" class="row-thumb" loading="lazy" onerror="this.style.display='none'" />`
           : '';
-        html += `<a href="map.html?park=${p.id}" class="kb-card">
-          <div class="kb-photo">${thumb || '<span class="kb-emoji">🌳</span>'}</div>
-          <div class="kb-name">${escHtml(p.name)}</div>
-        </a>`;
+        html += `<tr>
+          <td><span class="type-badge kb">🌿探訪</span></td>
+          <td class="cell-ward">${ward}</td>
+          <td class="cell-name">
+            <a href="map.html?park=${p.id}" class="park-link">${thumb}${escHtml(p.name)}</a>
+          </td>
+          <td class="cell-addr">${addr}</td>
+        </tr>`;
       });
-      html += '</div>';
+
+      html += '</tbody></table></div>';
       el.innerHTML = html;
     }
 
     // ── データ取得 ────────────────────────────────────────
     async function loadWater() {
       try {
-        waterParks = await fetch('/api/parks/list?source=water').then(r => r.json());
+        const r = await fetch('/api/parks/list?source=water');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        waterParks = await r.json();
         document.getElementById('water-count').textContent = waterParks.length;
         renderWater();
-      } catch {
+      } catch(e) {
         document.getElementById('water-content').innerHTML =
-          '<div class="list-error">⚠️ データの取得に失敗しました</div>';
+          `<div class="list-error">⚠️ データの取得に失敗しました（${e.message}）</div>`;
       }
     }
 
     async function loadKoentanbo() {
       try {
-        kbParks = await fetch('/api/parks/list?source=koentanbo&limit=500').then(r => r.json());
+        const r = await fetch('/api/parks/list?source=koentanbo&limit=500');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        kbParks = await r.json();
         document.getElementById('kb-count').textContent = kbParks.length;
         if (activeTab === 'koentanbo') renderKoentanbo();
-      } catch {
+      } catch(e) {
         document.getElementById('kb-content').innerHTML =
-          '<div class="list-error">⚠️ データの取得に失敗しました</div>';
+          `<div class="list-error">⚠️ データの取得に失敗しました（${e.message}）</div>`;
       }
     }
 

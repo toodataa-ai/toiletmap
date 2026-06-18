@@ -726,6 +726,115 @@ body.top-page {
   margin-top: 10px;
 }
 
+/* ── 公園一覧ページ ─────────────────────────────────── */
+.list-page { background: var(--color-bg); min-height: 100vh; }
+.list-page #header { position: sticky; top: 0; z-index: 100; }
+
+.list-wrap {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px 12px 40px;
+}
+
+/* タブ */
+.list-tabs {
+  display: flex; gap: 8px;
+  margin-bottom: 12px;
+}
+.list-tab {
+  flex: 1; padding: 10px 8px;
+  border: 2px solid #ddd; border-radius: 10px;
+  background: #fff; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.list-tab.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+.tab-count {
+  font-size: 11px; font-weight: 700;
+  background: rgba(255,255,255,0.25);
+  padding: 1px 6px; border-radius: 10px;
+}
+.list-tab:not(.active) .tab-count {
+  background: #eee; color: #555;
+}
+
+/* 検索 */
+.list-search-wrap { margin-bottom: 12px; }
+.list-search-wrap input {
+  width: 100%; padding: 10px 14px;
+  border: 1px solid #ddd; border-radius: 10px;
+  font-size: 14px; background: #fff;
+  outline: none; transition: border 0.15s;
+}
+.list-search-wrap input:focus { border-color: var(--color-primary); }
+
+/* ペイン */
+.list-pane {}
+
+.list-loading-wrap {
+  text-align: center; padding: 48px 0; color: var(--color-sub);
+}
+.list-empty {
+  text-align: center; padding: 48px 0;
+  color: var(--color-sub); font-size: 14px;
+}
+.list-error {
+  text-align: center; padding: 32px 16px;
+  color: #c62828; font-size: 14px;
+  background: #fff3f3; border-radius: 10px;
+}
+
+/* テーブル */
+.table-wrap { overflow-x: auto; border-radius: 10px; }
+.park-table {
+  width: 100%; border-collapse: collapse;
+  background: #fff;
+  font-size: 14px;
+}
+.park-table th {
+  background: var(--color-primary);
+  color: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.park-table th:first-child { border-radius: 10px 0 0 0; }
+.park-table th:last-child  { border-radius: 0 10px 0 0; }
+.park-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+}
+.park-table tr:last-child td { border-bottom: none; }
+.park-table tr:hover td { background: #f9f9f9; }
+
+.type-badge {
+  display: inline-block; font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: 10px; white-space: nowrap;
+}
+.type-badge.water { background: #E0F7FA; color: #00838F; }
+.type-badge.kb    { background: #E8F5E9; color: #2E7D32; }
+
+.cell-ward { white-space: nowrap; color: var(--color-sub); font-size: 13px; }
+.cell-name { min-width: 140px; }
+.cell-addr { font-size: 13px; color: var(--color-sub); min-width: 160px; max-width: 220px; }
+
+.park-link {
+  color: var(--color-text); text-decoration: none; font-weight: 500;
+  display: flex; align-items: center; gap: 6px;
+}
+.park-link:hover { color: var(--color-primary); text-decoration: underline; }
+
+.row-thumb {
+  width: 36px; height: 36px; object-fit: cover;
+  border-radius: 4px; flex-shrink: 0;
+}
+
 /* ── レスポンシブ ────────────────────────────────────── */
 @media (max-width: 480px) {
   #legend { display: none; }
