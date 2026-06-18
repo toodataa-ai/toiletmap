@@ -1058,16 +1058,30 @@ def fetch_suginami_parks():
             slug    = re.sub(r"[\s/\\]", "_", name)
             osm_id  = f"suginami_{slug}"
 
+            full_addr = f"東京都{address}" if address else ""
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                if cur.fetchone():
-                    _sg_status["done"] += 1
-                    continue
+                cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
+                row = cur.fetchone()
 
-            coords = _geocode_park(name, f"東京都{address}" if address else "")
+            if row:
+                existing_id, existing_addr = row
+                if not existing_addr and full_addr:
+                    coords = _geocode_park(name, full_addr)
+                    if coords:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                (coords[0], coords[1], full_addr, existing_id),
+                            )
+                        print(f"[suginami] 住所更新: {name}")
+                _sg_status["done"] += 1
+                continue
+
+            coords = _geocode_park(name, full_addr)
             if not coords:
-                print(f"[suginami] geocode 失敗: {name} ({address})")
+                print(f"[suginami] geocode 失敗: {name} ({full_addr})")
                 _sg_status["done"] += 1
                 continue
             lat, lon = coords
@@ -1077,10 +1091,10 @@ def fetch_suginami_parks():
                     cur = conn.cursor()
                     cur.execute(
                         _q(f"""INSERT INTO parks
-                               (osm_id, lat, lon, name, park_type, source, last_fetched, created_at)
-                               VALUES (%s,%s,%s,%s,'park','suginami',{now_expr},{now_expr})
+                               (osm_id, lat, lon, name, park_type, source, address, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','suginami',%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name),
+                        (osm_id, lat, lon, name, full_addr),
                     )
                     if cur.rowcount:
                         _sg_status["inserted"] += 1
@@ -1180,16 +1194,30 @@ def fetch_nerima_parks():
             slug        = re.sub(r"[\s/\\]", "_", name)
             osm_id      = f"nerima_{slug}"
 
+            full_addr = f"東京都練馬区{address}" if address else "東京都練馬区"
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                if cur.fetchone():
-                    _nm_status["done"] += 1
-                    continue
+                cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
+                row = cur.fetchone()
 
-            coords = _geocode_park(name, f"東京都練馬区{address}" if address else "")
+            if row:
+                existing_id, existing_addr = row
+                if not existing_addr and full_addr:
+                    coords = _geocode_park(name, full_addr)
+                    if coords:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                (coords[0], coords[1], full_addr, existing_id),
+                            )
+                        print(f"[nerima] 住所更新: {name}")
+                _nm_status["done"] += 1
+                continue
+
+            coords = _geocode_park(name, full_addr)
             if not coords:
-                print(f"[nerima] geocode 失敗: {name} ({address})")
+                print(f"[nerima] geocode 失敗: {name} ({full_addr})")
                 _nm_status["done"] += 1
                 continue
             lat, lon = coords
@@ -1199,10 +1227,10 @@ def fetch_nerima_parks():
                     cur = conn.cursor()
                     cur.execute(
                         _q(f"""INSERT INTO parks
-                               (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
-                               VALUES (%s,%s,%s,%s,'park','nerima',%s,%s,{now_expr},{now_expr})
+                               (osm_id, lat, lon, name, park_type, source, description, source_url, address, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','nerima',%s,%s,%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, description, NERIMA_URL),
+                        (osm_id, lat, lon, name, description, NERIMA_URL, full_addr),
                     )
                     if cur.rowcount:
                         _nm_status["inserted"] += 1
@@ -1287,12 +1315,13 @@ def fetch_toritsu_parks(force: bool = False):
             geocode_addr = f"東京都{address_primary}" if address_primary else ""
 
             existing_id = None
+            existing_addr = None
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
+                cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
                 row = cur.fetchone()
                 if row:
-                    existing_id = row[0]
+                    existing_id, existing_addr = row
                     if not force:
                         _tt_status["done"] += 1
                         continue
@@ -1310,23 +1339,24 @@ def fetch_toritsu_parks(force: bool = False):
                 _tt_status["done"] += 1
                 continue
             lat, lon = coords
+            full_addr = f"東京都{geocode_addr}" if geocode_addr and not geocode_addr.startswith("東京都") else geocode_addr
 
             try:
                 with get_db() as conn:
                     cur = conn.cursor()
                     if existing_id:
                         cur.execute(
-                            _q("UPDATE parks SET lat=%s, lon=%s, source='toritsu', source_url=%s, osm_id=%s WHERE id=%s"),
-                            (lat, lon, source_url, osm_id, existing_id),
+                            _q("UPDATE parks SET lat=%s, lon=%s, source='toritsu', source_url=%s, osm_id=%s, address=COALESCE(NULLIF(address,''),%s) WHERE id=%s"),
+                            (lat, lon, source_url, osm_id, full_addr, existing_id),
                         )
                         print(f"[toritsu] 座標更新: {name} ({lat:.5f},{lon:.5f})")
                     else:
                         cur.execute(
                             _q(f"""INSERT INTO parks
-                                   (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
-                                   VALUES (%s,%s,%s,%s,'park','toritsu',%s,%s,{now_expr},{now_expr})
+                                   (osm_id, lat, lon, name, park_type, source, description, source_url, address, last_fetched, created_at)
+                                   VALUES (%s,%s,%s,%s,'park','toritsu',%s,%s,%s,{now_expr},{now_expr})
                                    ON CONFLICT (osm_id) DO NOTHING"""),
-                            (osm_id, lat, lon, name, None, source_url),
+                            (osm_id, lat, lon, name, None, source_url, full_addr),
                         )
                     _tt_status["inserted"] += 1
                     print(f"[toritsu] 登録/更新: {name} ({lat:.5f},{lon:.5f})")
@@ -1400,10 +1430,23 @@ def fetch_minato_parks():
 
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                if cur.fetchone():
-                    _mn_status["done"] += 1
-                    continue
+                cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
+                row = cur.fetchone()
+
+            if row:
+                existing_id, existing_addr = row
+                if not existing_addr:
+                    coords = _geocode_park(name, "東京都港区")
+                    if coords:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                (coords[0], coords[1], "東京都港区", existing_id),
+                            )
+                        print(f"[minato] 住所更新: {name}")
+                _mn_status["done"] += 1
+                continue
 
             coords = _geocode_park(name, "東京都港区")
             if not coords:
@@ -1417,10 +1460,10 @@ def fetch_minato_parks():
                     cur = conn.cursor()
                     cur.execute(
                         _q(f"""INSERT INTO parks
-                               (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
-                               VALUES (%s,%s,%s,%s,'park','minato',%s,%s,{now_expr},{now_expr})
+                               (osm_id, lat, lon, name, park_type, source, description, source_url, address, last_fetched, created_at)
+                               VALUES (%s,%s,%s,%s,'park','minato',%s,%s,%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, desc, source_url),
+                        (osm_id, lat, lon, name, desc, source_url, "東京都港区"),
                     )
                     _mn_status["inserted"] += 1
             except Exception as exc:
@@ -1556,10 +1599,23 @@ def _fetch_generic_ward_parks(
 
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id FROM parks WHERE osm_id=%s"), (osm_id,))
-                if cur.fetchone():
-                    status["done"] += 1
-                    continue
+                cur.execute(_q("SELECT id, address FROM parks WHERE osm_id=%s"), (osm_id,))
+                row = cur.fetchone()
+
+            if row:
+                existing_id, existing_addr = row
+                if not existing_addr and address:
+                    coords = _geocode_park(name, address)
+                    if coords:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                (coords[0], coords[1], address, existing_id),
+                            )
+                        print(f"[{source}] 住所更新: {name}")
+                status["done"] += 1
+                continue
 
             coords = _geocode_park(name, address)
             if not coords:
