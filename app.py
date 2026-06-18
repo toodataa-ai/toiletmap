@@ -783,8 +783,31 @@ def _is_ward_only_addr(addr: str) -> bool:
     return bool(re.match(r'^東京都[\S]+[都区市]$', addr or ""))
 
 
+def _reverse_geocode_gsi(lat: float, lon: float) -> str:
+    """国土地理院 逆ジオコーダーで座標から日本語住所文字列を取得。
+    Nominatim が区名レベルしか返せない場合の補完に使用する。"""
+    try:
+        resp = _requests.get(
+            "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress",
+            params={"lon": lon, "lat": lat},
+            headers={"User-Agent": KOENTANBO_UA},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results") or {}
+        lv01 = results.get("lv01Nm", "")
+        if lv01:
+            muni_cd = results.get("muniCd", "")
+            return ("東京都" + lv01) if muni_cd.startswith("13") else lv01
+    except Exception as exc:
+        print(f"[geocode/gsi-reverse] error ({lat},{lon}): {exc}")
+    return ""
+
+
 def _geocode_nominatim(q: str) -> tuple | None:
-    """Nominatim で検索。(lat, lon, addr_str) または None を返す。"""
+    """Nominatim で検索。(lat, lon, addr_str) または None を返す。
+    住所が区名レベルのみの場合は GSI 逆ジオコーダーで補完する。"""
     result = None
     try:
         resp = _requests.get(
@@ -799,6 +822,11 @@ def _geocode_nominatim(q: str) -> tuple | None:
             lat = float(data[0]["lat"])
             lon = float(data[0]["lon"])
             addr_str = _extract_nominatim_addr(data[0].get("address", {}))
+            # Nominatim が区名レベルしか返せない場合は GSI 逆ジオコードで補完
+            if not addr_str or _is_ward_only_addr(addr_str):
+                rev = _reverse_geocode_gsi(lat, lon)
+                if rev and len(rev) > len(addr_str or ""):
+                    addr_str = rev
             result = (lat, lon, addr_str)
     except Exception as exc:
         print(f"[geocode/nominatim] error '{q}': {exc}")
@@ -1582,6 +1610,7 @@ _JUNK_PAT = re.compile(
     r'|について|に関する|ですが|ので|ため'  # 説明文・接続助詞
     r'|ガーデナー|カレンダー|お知らせ|トイレ|整備|落書き'  # ナビリンク
     r'|電話|FAX|ファックス|TEL|お問い合わせ|担当課|窓口'   # 連絡先情報
+    r'|公衆便所'                     # 便所設備名
     r'|^【'                         # 【終了】などのステータス表記
 )
 
@@ -1600,7 +1629,7 @@ def _fetch_generic_ward_parks(
     status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
     skip_names = {"公園名", "園名", "実施場所", "施設名", "名称", "公園・児童遊園名",
                   "No.", "番号", "住所", "所在地", "施設の種類", "特徴", "週休日",
-                  "みどり・公園"}
+                  "みどり・公園", "区立公園", "都立公園", "市立公園"}
     if extra_skip:
         skip_names |= extra_skip
     headers = {"User-Agent": KOENTANBO_UA}
@@ -1628,6 +1657,10 @@ def _fetch_generic_ward_parks(
                 if not name or name in skip_names or re.match(r'^\d+$', name):
                     continue
                 if _is_junk_name(name):
+                    continue
+                # 公園・緑地・広場等のキーワードを含まない行は施設種別等として除外
+                _PARK_KWS = ("公園", "遊園", "緑地", "広場", "池", "児童", "運動", "公苑", "緑道", "ガーデン")
+                if not any(kw in name for kw in _PARK_KWS):
                     continue
                 if name in seen:
                     continue
@@ -2274,7 +2307,11 @@ def fetch_meguro_parks():
             if _is_junk_name(name) or name in seen:
                 continue
             addr_part = m.group(2).strip()
-            addr = _build_full_address(addr_part, "東京都目黒区")
+            # ひらがなのみは読み仮名（ふりがな）なので住所として使わない
+            if re.fullmatch(r'[ぁ-ん・\s]+', addr_part):
+                addr = "東京都目黒区"
+            else:
+                addr = _build_full_address(addr_part, "東京都目黒区")
             seen.add(name)
             parks_data.append({"name": name, "address": addr, "description": None})
     except Exception as exc:
