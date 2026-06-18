@@ -409,11 +409,20 @@ async function loadStats() {
 let pollTimer = null;
 let startTime = 0;
 
-function setIdle(msg = '—') {
+function setIdle() {
   document.getElementById('sync-badge').className = 'badge idle';
   document.getElementById('sync-badge').textContent = '待機中';
   document.getElementById('progress-wrap').classList.remove('indeterminate');
   document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('status-detail').textContent = '—';
+  document.getElementById('run-btn').disabled = false;
+}
+
+function setDone(msg) {
+  document.getElementById('sync-badge').className = 'badge done';
+  document.getElementById('sync-badge').textContent = '完了';
+  document.getElementById('progress-wrap').classList.remove('indeterminate');
+  document.getElementById('progress-fill').style.width = '100%';
   document.getElementById('status-detail').textContent = msg;
   document.getElementById('run-btn').disabled = false;
 }
@@ -455,7 +464,7 @@ async function pollStatus() {
 
     if (!s.running && s.done > 0) {
       clearInterval(pollTimer); pollTimer = null;
-      setIdle(`完了: ${s.inserted}件 登録/更新、${s.skipped.toLocaleString()}件 スキップ`);
+      setDone(`完了: ${s.inserted}件 登録/更新、${s.skipped.toLocaleString()}件 スキップ`);
       loadStats();
     } else if (!s.running && s.done === 0) {
       setIdle();
@@ -466,6 +475,7 @@ async function pollStatus() {
 document.getElementById('run-btn').addEventListener('click', async () => {
   if (!confirm('公園探訪郊外からデータを取得します。\n初回は2〜3分、2回目以降は差分のみです。よろしいですか？')) return;
   startTime = Date.now();
+  setIdle();
   setRunning();
   document.getElementById('progress-wrap').classList.add('indeterminate');
   document.getElementById('status-detail').textContent = '開始しています…';
