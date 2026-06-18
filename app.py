@@ -1362,7 +1362,7 @@ def fetch_minato_parks():
                     continue
                 a = cells[1].find("a", href=True)
                 name = (a.get_text(strip=True) if a else cells[1].get_text(strip=True))
-                if not name or name in skip_names or name in seen:
+                if not name or name in skip_names or name in seen or _is_junk_name(name):
                     continue
                 seen.add(name)
                 href = a["href"] if a else ""
@@ -1446,6 +1446,18 @@ def _build_full_address(addr_raw: str, ward_prefix: str) -> str:
     return ward_prefix + addr_raw
 
 
+_JUNK_PAT = re.compile(
+    r'^\d+月'                       # 日付（6月4日、8月10日等）
+    r'|です|ます|ください'           # 敬語文
+    r'|について|に関する'             # 説明文
+    r'|ガーデナー|カレンダー|お知らせ|トイレ|整備|落書き'  # ナビリンク
+)
+
+def _is_junk_name(name: str) -> bool:
+    """公園名でない誤取得テキスト（ナビ・注記・日付等）を判定する。"""
+    return bool(_JUNK_PAT.search(name))
+
+
 def _fetch_generic_ward_parks(
     source: str, url: str, status: dict,
     ward_prefix: str,
@@ -1455,7 +1467,8 @@ def _fetch_generic_ward_parks(
     """汎用区水遊び公園スクレイパー（テーブル型ページ対応）。"""
     status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
     skip_names = {"公園名", "園名", "実施場所", "施設名", "名称", "公園・児童遊園名",
-                  "No.", "番号", "住所", "所在地", "施設の種類", "特徴", "週休日"}
+                  "No.", "番号", "住所", "所在地", "施設の種類", "特徴", "週休日",
+                  "みどり・公園"}
     if extra_skip:
         skip_names |= extra_skip
     headers = {"User-Agent": KOENTANBO_UA}
@@ -1482,8 +1495,7 @@ def _fetch_generic_ward_parks(
                 name = cells[name_col].get_text(strip=True)
                 if not name or name in skip_names or re.match(r'^\d+$', name):
                     continue
-                # rowspan テーブルの清掃日行（例: "8月10日（月曜日）"）をスキップ
-                if re.match(r'^\d+月\d+日', name):
+                if _is_junk_name(name):
                     continue
                 if name in seen:
                     continue
@@ -1506,7 +1518,7 @@ def _fetch_generic_ward_parks(
                 text = li.get_text(strip=True)
                 if ("公園" in text or "遊園" in text) and len(text) <= 40:
                     name = re.sub(r'\s+', '', text)
-                    if name and name not in seen and name not in skip_names:
+                    if name and name not in seen and name not in skip_names and not _is_junk_name(name):
                         seen.add(name)
                         parks_data.append({"name": name, "address": ward_prefix, "description": None})
 
@@ -1643,10 +1655,30 @@ def ota_status():
 # ── 世田谷区 ──────────────────────────────────────────────────────────────────
 
 def fetch_setagaya_parks():
-    _fetch_generic_ward_parks(
-        'setagaya', SETAGAYA_URL, _sw_status,
-        ward_prefix="東京都世田谷区", name_col=0, addr_col=1, desc_col=2,
-    )
+    """世田谷区 - 公園名が <h2> 見出しに記載されているため専用パーサー。"""
+    source, status = 'setagaya', _sw_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    try:
+        r = _requests.get(SETAGAYA_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        for h2 in soup.find_all("h2"):
+            name = h2.get_text(strip=True)
+            if not ("公園" in name or "遊園" in name or "緑地" in name):
+                continue
+            # "水辺のある公園", "特徴のある公園" 等のカテゴリ見出しをスキップ
+            if "ある" in name or _is_junk_name(name):
+                continue
+            if name not in seen:
+                seen.add(name)
+                parks_data.append({"name": name, "address": "東京都世田谷区", "description": None})
+        _sync_parks_data(source, SETAGAYA_URL, status, parks_data)
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
 
 @app.post("/api/sync/setagaya")
 def sync_setagaya():
