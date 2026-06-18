@@ -755,20 +755,45 @@ def _delete_removed_parks(source: str, current_osm_ids: set, status: dict):
         print(f"[{source}] delete error: {exc}")
 
 
+def _extract_nominatim_addr(addr_dict: dict) -> str:
+    """Nominatim addressdetails から日本語住所文字列を構築する。"""
+    city         = addr_dict.get("city") or addr_dict.get("town") or addr_dict.get("county") or ""
+    district     = addr_dict.get("city_district") or ""
+    suburb       = addr_dict.get("suburb") or ""
+    neighbourhood = addr_dict.get("neighbourhood") or addr_dict.get("quarter") or ""
+    parts = [p for p in [city, district, suburb, neighbourhood] if p]
+    if not parts:
+        return ""
+    addr = "".join(parts)
+    return addr if addr.startswith("東京都") else ("東京都" + addr if "東京" in addr or "都" in city else addr)
+
+
+def _best_addr(source_addr: str, geocoded_addr: str) -> str:
+    """ソース住所とジオコード住所のうち、より具体的な方を返す。"""
+    if not source_addr:
+        return geocoded_addr or ""
+    if not geocoded_addr:
+        return source_addr
+    return geocoded_addr if len(geocoded_addr) > len(source_addr) else source_addr
+
+
 def _geocode_nominatim(q: str) -> tuple | None:
-    """Nominatim で検索。成功・失敗問わず 1.1s 待機。"""
+    """Nominatim で検索。(lat, lon, addr_str) または None を返す。"""
     result = None
     try:
         resp = _requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={"q": q, "format": "json", "limit": 1, "countrycodes": "jp"},
+            params={"q": q, "format": "json", "limit": 1, "countrycodes": "jp", "addressdetails": 1},
             headers={"User-Agent": KOENTANBO_UA},
             timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
         if data:
-            result = (float(data[0]["lat"]), float(data[0]["lon"]))
+            lat = float(data[0]["lat"])
+            lon = float(data[0]["lon"])
+            addr_str = _extract_nominatim_addr(data[0].get("address", {}))
+            result = (lat, lon, addr_str)
     except Exception as exc:
         print(f"[geocode/nominatim] error '{q}': {exc}")
     time.sleep(1.1)
@@ -776,7 +801,7 @@ def _geocode_nominatim(q: str) -> tuple | None:
 
 
 def _geocode_gsi(address: str) -> tuple | None:
-    """国土地理院 API で住所→(lat, lon) 変換。日本語住所に強く制限なし。"""
+    """国土地理院 API で住所→(lat, lon, "") 変換。日本語住所に強く制限なし。"""
     try:
         resp = _requests.get(
             "https://msearch.gsi.go.jp/address-search/AddressSearch",
@@ -788,14 +813,15 @@ def _geocode_gsi(address: str) -> tuple | None:
         data = resp.json()
         if data:
             lon, lat = data[0]["geometry"]["coordinates"]
-            return (float(lat), float(lon))
+            return (float(lat), float(lon), "")
     except Exception as exc:
         print(f"[geocode/gsi] error '{address}': {exc}")
     return None
 
 
 def _geocode_park(name: str, address: str = "") -> tuple | None:
-    """公園名優先で Nominatim → 公園名+住所Nominatim → 国土地理院 → 住所Nominatim の順で試みる。"""
+    """公園名優先で Nominatim → 公園名+住所Nominatim → 国土地理院 → 住所Nominatim の順で試みる。
+    (lat, lon, geocoded_addr_str) を返す。geocoded_addr_str は Nominatim 由来の住所。"""
     # 1. 公園名のみで Nominatim
     result = _geocode_nominatim(name)
     if result:
@@ -935,20 +961,34 @@ def fetch_shinjuku_parks():
             slug        = re.sub(r'[^a-z0-9_]', '_', href.rstrip("/").split("/")[-1].lower())
             osm_id      = f"shinjuku_{slug}"
 
+            full_addr_sj = f"東京都新宿区{address}" if address else "東京都新宿区"
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(_q("SELECT id, lat, lon FROM parks WHERE osm_id=%s"), (osm_id,))
+                cur.execute(_q("SELECT id, lat, lon, address FROM parks WHERE osm_id=%s"), (osm_id,))
                 existing = cur.fetchone()
 
             if existing:
-                park_id, lat, lon = existing[0], existing[1], existing[2]
+                park_id, lat, lon, existing_addr = existing[0], existing[1], existing[2], existing[3]
+                if not existing_addr:
+                    result = _geocode_park(name, full_addr_sj)
+                    if result:
+                        lat, lon, geocoded_addr = result
+                        better = _best_addr(full_addr_sj, geocoded_addr)
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                                (lat, lon, better, park_id),
+                            )
+                        print(f"[shinjuku] 住所更新: {name} → {better}")
             else:
-                coords = _geocode_park(name, f"東京都新宿区{address}" if address else "")
-                if not coords:
-                    print(f"[shinjuku] geocode 失敗: {name} ({address})")
+                result = _geocode_park(name, full_addr_sj)
+                if not result:
+                    print(f"[shinjuku] geocode 失敗: {name} ({full_addr_sj})")
                     _sj_status["done"] += 1
                     continue
-                lat, lon = coords
+                lat, lon, geocoded_addr = result
+                better = _best_addr(full_addr_sj, geocoded_addr)
                 park_id = None
 
             detail_url = source_url
@@ -960,10 +1000,10 @@ def fetch_shinjuku_parks():
                     if park_id is None:
                         cur.execute(
                             _q(f"""INSERT INTO parks
-                                   (osm_id, lat, lon, name, park_type, source, description, source_url, last_fetched, created_at)
-                                   VALUES (%s,%s,%s,%s,'park','shinjuku',%s,%s,{now_expr},{now_expr})
+                                   (osm_id, lat, lon, name, park_type, source, description, source_url, address, last_fetched, created_at)
+                                   VALUES (%s,%s,%s,%s,'park','shinjuku',%s,%s,%s,{now_expr},{now_expr})
                                    ON CONFLICT (osm_id) DO NOTHING"""),
-                            (osm_id, lat, lon, name, description, source_url),
+                            (osm_id, lat, lon, name, description, source_url, better),
                         )
                         if USE_SQLITE:
                             park_id = cur.lastrowid
@@ -1067,24 +1107,27 @@ def fetch_suginami_parks():
             if row:
                 existing_id, existing_addr = row
                 if not existing_addr and full_addr:
-                    coords = _geocode_park(name, full_addr)
-                    if coords:
+                    result = _geocode_park(name, full_addr)
+                    if result:
+                        lat_r, lon_r, geocoded_addr = result
+                        better = _best_addr(full_addr, geocoded_addr)
                         with get_db() as conn:
                             cur = conn.cursor()
                             cur.execute(
                                 _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (coords[0], coords[1], full_addr, existing_id),
+                                (lat_r, lon_r, better, existing_id),
                             )
-                        print(f"[suginami] 住所更新: {name}")
+                        print(f"[suginami] 住所更新: {name} → {better}")
                 _sg_status["done"] += 1
                 continue
 
-            coords = _geocode_park(name, full_addr)
-            if not coords:
+            result = _geocode_park(name, full_addr)
+            if not result:
                 print(f"[suginami] geocode 失敗: {name} ({full_addr})")
                 _sg_status["done"] += 1
                 continue
-            lat, lon = coords
+            lat, lon, geocoded_addr = result
+            better = _best_addr(full_addr, geocoded_addr)
 
             try:
                 with get_db() as conn:
@@ -1094,7 +1137,7 @@ def fetch_suginami_parks():
                                (osm_id, lat, lon, name, park_type, source, address, last_fetched, created_at)
                                VALUES (%s,%s,%s,%s,'park','suginami',%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, full_addr),
+                        (osm_id, lat, lon, name, better),
                     )
                     if cur.rowcount:
                         _sg_status["inserted"] += 1
@@ -1203,24 +1246,27 @@ def fetch_nerima_parks():
             if row:
                 existing_id, existing_addr = row
                 if not existing_addr and full_addr:
-                    coords = _geocode_park(name, full_addr)
-                    if coords:
+                    result = _geocode_park(name, full_addr)
+                    if result:
+                        lat_r, lon_r, geocoded_addr = result
+                        better = _best_addr(full_addr, geocoded_addr)
                         with get_db() as conn:
                             cur = conn.cursor()
                             cur.execute(
                                 _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (coords[0], coords[1], full_addr, existing_id),
+                                (lat_r, lon_r, better, existing_id),
                             )
-                        print(f"[nerima] 住所更新: {name}")
+                        print(f"[nerima] 住所更新: {name} → {better}")
                 _nm_status["done"] += 1
                 continue
 
-            coords = _geocode_park(name, full_addr)
-            if not coords:
+            result = _geocode_park(name, full_addr)
+            if not result:
                 print(f"[nerima] geocode 失敗: {name} ({full_addr})")
                 _nm_status["done"] += 1
                 continue
-            lat, lon = coords
+            lat, lon, geocoded_addr = result
+            better = _best_addr(full_addr, geocoded_addr)
 
             try:
                 with get_db() as conn:
@@ -1230,7 +1276,7 @@ def fetch_nerima_parks():
                                (osm_id, lat, lon, name, park_type, source, description, source_url, address, last_fetched, created_at)
                                VALUES (%s,%s,%s,%s,'park','nerima',%s,%s,%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, description, NERIMA_URL, full_addr),
+                        (osm_id, lat, lon, name, description, NERIMA_URL, better),
                     )
                     if cur.rowcount:
                         _nm_status["inserted"] += 1
@@ -1333,13 +1379,18 @@ def fetch_toritsu_parks(force: bool = False):
                         existing_id = other[0]
 
             # 既知座標辞書を優先、なければジオコード
-            coords = TORITSU_COORDS.get(name) or _geocode_park(name, geocode_addr)
-            if not coords:
-                print(f"[toritsu] geocode 失敗: {name} ({geocode_addr})")
-                _tt_status["done"] += 1
-                continue
-            lat, lon = coords
-            full_addr = f"東京都{geocode_addr}" if geocode_addr and not geocode_addr.startswith("東京都") else geocode_addr
+            hardcoded = TORITSU_COORDS.get(name)
+            if hardcoded:
+                lat, lon = hardcoded
+                geocoded_addr_tt = ""
+            else:
+                result = _geocode_park(name, geocode_addr)
+                if not result:
+                    print(f"[toritsu] geocode 失敗: {name} ({geocode_addr})")
+                    _tt_status["done"] += 1
+                    continue
+                lat, lon, geocoded_addr_tt = result
+            full_addr = _best_addr(geocode_addr, geocoded_addr_tt)
 
             try:
                 with get_db() as conn:
@@ -1436,24 +1487,27 @@ def fetch_minato_parks():
             if row:
                 existing_id, existing_addr = row
                 if not existing_addr:
-                    coords = _geocode_park(name, "東京都港区")
-                    if coords:
+                    result = _geocode_park(name, "東京都港区")
+                    if result:
+                        lat_r, lon_r, geocoded_addr = result
+                        better = _best_addr("東京都港区", geocoded_addr)
                         with get_db() as conn:
                             cur = conn.cursor()
                             cur.execute(
                                 _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (coords[0], coords[1], "東京都港区", existing_id),
+                                (lat_r, lon_r, better, existing_id),
                             )
-                        print(f"[minato] 住所更新: {name}")
+                        print(f"[minato] 住所更新: {name} → {better}")
                 _mn_status["done"] += 1
                 continue
 
-            coords = _geocode_park(name, "東京都港区")
-            if not coords:
+            result = _geocode_park(name, "東京都港区")
+            if not result:
                 print(f"[minato] geocode 失敗: {name}")
                 _mn_status["done"] += 1
                 continue
-            lat, lon = coords
+            lat, lon, geocoded_addr = result
+            better = _best_addr("東京都港区", geocoded_addr)
 
             try:
                 with get_db() as conn:
@@ -1463,7 +1517,7 @@ def fetch_minato_parks():
                                (osm_id, lat, lon, name, park_type, source, description, source_url, address, last_fetched, created_at)
                                VALUES (%s,%s,%s,%s,'park','minato',%s,%s,%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, desc, source_url, "東京都港区"),
+                        (osm_id, lat, lon, name, desc, source_url, better),
                     )
                     _mn_status["inserted"] += 1
             except Exception as exc:
@@ -1605,24 +1659,27 @@ def _fetch_generic_ward_parks(
             if row:
                 existing_id, existing_addr = row
                 if not existing_addr and address:
-                    coords = _geocode_park(name, address)
-                    if coords:
+                    result = _geocode_park(name, address)
+                    if result:
+                        lat_r, lon_r, geocoded_addr = result
+                        final_addr = _best_addr(address, geocoded_addr)
                         with get_db() as conn:
                             cur = conn.cursor()
                             cur.execute(
                                 _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                                (coords[0], coords[1], address, existing_id),
+                                (lat_r, lon_r, final_addr, existing_id),
                             )
-                        print(f"[{source}] 住所更新: {name}")
+                        print(f"[{source}] 住所更新: {name} → {final_addr}")
                 status["done"] += 1
                 continue
 
-            coords = _geocode_park(name, address)
-            if not coords:
+            result = _geocode_park(name, address)
+            if not result:
                 print(f"[{source}] geocode 失敗: {name} ({address})")
                 status["done"] += 1
                 continue
-            lat, lon = coords
+            lat, lon, geocoded_addr = result
+            final_addr = _best_addr(address, geocoded_addr)
 
             try:
                 with get_db() as conn:
@@ -1633,7 +1690,7 @@ def _fetch_generic_ward_parks(
                                 address, last_fetched, created_at)
                                VALUES (%s,%s,%s,%s,'park',%s,%s,%s,%s,{now_expr},{now_expr})
                                ON CONFLICT (osm_id) DO NOTHING"""),
-                        (osm_id, lat, lon, name, source, description, url, address),
+                        (osm_id, lat, lon, name, source, description, url, final_addr),
                     )
                     if cur.rowcount:
                         status["inserted"] += 1
@@ -1677,25 +1734,28 @@ def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
             existing_id, existing_addr = row
             # 住所が未設定のレコードは座標・住所を再ジオコードして更新
             if not existing_addr and address:
-                coords = _geocode_park(name, address)
-                if coords:
+                result = _geocode_park(name, address)
+                if result:
+                    lat_r, lon_r, geocoded_addr = result
+                    final_addr = _best_addr(address, geocoded_addr)
                     with get_db() as conn:
                         cur = conn.cursor()
                         cur.execute(
                             _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
-                            (coords[0], coords[1], address, existing_id),
+                            (lat_r, lon_r, final_addr, existing_id),
                         )
                     status["inserted"] += 1
-                    print(f"[{source}] 住所更新: {name} ({coords[0]:.5f},{coords[1]:.5f})")
+                    print(f"[{source}] 住所更新: {name} → {final_addr}")
             status["done"] += 1
             continue
 
-        coords = _geocode_park(name, address)
-        if not coords:
+        result = _geocode_park(name, address)
+        if not result:
             print(f"[{source}] geocode 失敗: {name} ({address})")
             status["done"] += 1
             continue
-        lat, lon = coords
+        lat, lon, geocoded_addr = result
+        final_addr = _best_addr(address, geocoded_addr)
 
         try:
             with get_db() as conn:
@@ -1706,11 +1766,11 @@ def _sync_parks_data(source: str, url: str, status: dict, parks_data: list):
                             address, last_fetched, created_at)
                            VALUES (%s,%s,%s,%s,'park',%s,%s,%s,%s,{now_expr},{now_expr})
                            ON CONFLICT (osm_id) DO NOTHING"""),
-                    (osm_id, lat, lon, name, source, description, url, address),
+                    (osm_id, lat, lon, name, source, description, url, final_addr),
                 )
                 if cur.rowcount:
                     status["inserted"] += 1
-                    print(f"[{source}] 登録: {name} ({lat:.5f},{lon:.5f})")
+                    print(f"[{source}] 登録: {name} ({lat:.5f},{lon:.5f}) addr={final_addr}")
         except Exception as exc:
             print(f"[{source}] db error {name}: {exc}")
         status["done"] += 1
