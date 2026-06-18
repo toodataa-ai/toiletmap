@@ -1481,6 +1481,9 @@ def _fetch_generic_ward_parks(
                 name = cells[name_col].get_text(strip=True)
                 if not name or name in skip_names or re.match(r'^\d+$', name):
                     continue
+                # rowspan テーブルの清掃日行（例: "8月10日（月曜日）"）をスキップ
+                if re.match(r'^\d+月\d+日', name):
+                    continue
                 if name in seen:
                     continue
                 seen.add(name)
