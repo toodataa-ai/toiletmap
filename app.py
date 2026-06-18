@@ -1695,10 +1695,35 @@ def setagaya_status():
 # ── 台東区 ────────────────────────────────────────────────────────────────────
 
 def fetch_taito_parks():
-    _fetch_generic_ward_parks(
-        'taito', TAITO_URL, _ti_status,
-        ward_prefix="東京都台東区", name_col=0, addr_col=1, desc_col=2,
-    )
+    """台東区 - li要素に「公園名（住所）」形式で記載されているため専用パーサー。"""
+    source, status = 'taito', _ti_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    try:
+        r = _requests.get(TAITO_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        main = soup.find(["main", "article"]) or soup
+        for li in main.find_all("li"):
+            raw = li.get_text(strip=True)
+            m = re.match(r'^(.+?)[（(]([^）)]+)[）)]', raw)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if not ("公園" in name or "遊園" in name or "広場" in name):
+                continue
+            if _is_junk_name(name):
+                continue
+            addr = "東京都台東区" + m.group(2).strip()
+            if name not in seen:
+                seen.add(name)
+                parks_data.append({"name": name, "address": addr, "description": None})
+        _sync_parks_data(source, TAITO_URL, status, parks_data)
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
 
 @app.post("/api/sync/taito")
 def sync_taito():
@@ -1715,10 +1740,35 @@ def taito_status():
 # ── 文京区 ────────────────────────────────────────────────────────────────────
 
 def fetch_bunkyo_parks():
-    _fetch_generic_ward_parks(
-        'bunkyo', BUNKYO_URL, _bk_status,
-        ward_prefix="東京都文京区", name_col=0, addr_col=1,
-    )
+    """文京区 - li要素に「公園名（住所）」形式で記載されているため専用パーサー。"""
+    source, status = 'bunkyo', _bk_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    try:
+        r = _requests.get(BUNKYO_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        main = soup.find(["main", "article"]) or soup
+        for li in main.find_all("li"):
+            raw = li.get_text(strip=True)
+            m = re.match(r'^(.+?)[（(]([^）)]+)[）)]', raw)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            if not ("公園" in name or "遊園" in name or "緑地" in name):
+                continue
+            if _is_junk_name(name):
+                continue
+            addr = "東京都文京区" + m.group(2).strip()
+            if name not in seen:
+                seen.add(name)
+                parks_data.append({"name": name, "address": addr, "description": None})
+        _sync_parks_data(source, BUNKYO_URL, status, parks_data)
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
 
 @app.post("/api/sync/bunkyo")
 def sync_bunkyo():
@@ -1834,10 +1884,44 @@ def itabashi_status():
 # ── 足立区 ────────────────────────────────────────────────────────────────────
 
 def fetch_adachi_parks():
-    _fetch_generic_ward_parks(
-        'adachi', ADACHI_URL, _ad_status,
-        ward_prefix="東京都足立区", name_col=0, addr_col=1, desc_col=3,
-    )
+    """足立区 - 「公園名（所在地）」が1列に合体しているため専用パーサー。"""
+    source, status = 'adachi', _ad_status
+    status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    try:
+        r = _requests.get(ADACHI_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding
+        soup = BeautifulSoup(r.text, "html.parser")
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        skip = {"公園名", "公園名（所在地）", "施設名"}
+        for table in soup.find_all("table"):
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 1:
+                    continue
+                raw = cells[0].get_text(strip=True)
+                if not raw or raw in skip or _is_junk_name(raw):
+                    continue
+                # "北鹿浜公園（鹿浜5-22-1）" → name="北鹿浜公園", addr="東京都足立区鹿浜5-22-1"
+                m = re.match(r'^(.+?)[（(]([^）)]+)[）)]', raw)
+                if m:
+                    name = m.group(1).strip()
+                    addr = "東京都足立区" + m.group(2).strip()
+                else:
+                    name = raw
+                    addr = "東京都足立区"
+                desc = cells[2].get_text(strip=True) if len(cells) > 2 else None
+                if desc and _is_junk_name(desc):
+                    desc = None
+                if name and name not in seen:
+                    seen.add(name)
+                    parks_data.append({"name": name, "address": addr,
+                                       "description": f"施設: {desc}" if desc else None})
+        _sync_parks_data(source, ADACHI_URL, status, parks_data)
+    except Exception as exc:
+        print(f"[{source}] fetch error: {exc}")
+        status["running"] = False
 
 @app.post("/api/sync/adachi")
 def sync_adachi():
