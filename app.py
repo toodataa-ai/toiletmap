@@ -63,6 +63,8 @@ MEGURO_URL   = "https://www.city.meguro.tokyo.jp/douro/shisetsu/sports/nagare-un
 SHIBUYA_URL  = "https://www.city.shibuya.tokyo.jp/shisetsu/koen/kuritsu-koen/shinsuishisetsu.html"
 NAKANO_URL   = "https://www.city.tokyo-nakano.lg.jp/machizukuri/kouen/kouensiyou/jyabujyabuike.html"
 EDOGAWA_URL  = "https://www.city.edogawa.tokyo.jp/e066/kuseijoho/gaiyo/shisetsuguide/bunya/koendobutsuen/jabjab.html"
+CHUO_URL     = "https://www.city.chuo.lg.jp/a0037/machizukuri/kouenryokka/kouen/zyabuzyabuiker2.html"
+TOSHIMA_URL  = "https://www.city.toshima.lg.jp/340/2108261057.html"
 
 # 都立公園22件の正確な座標（ジオコード失敗時のフォールバック）
 # 新規公園がサイトに追加された場合はここにない→自動ジオコードへフォールバック
@@ -74,7 +76,7 @@ TORITSU_COORDS: dict[str, tuple[float, float]] = {
     "尾久の原公園":     (35.75150, 139.77690),
     "亀戸中央公園":     (35.70075, 139.83612),
     "木場公園":         (35.67056, 139.80944),
-    "駒沢オリンピック公園": (35.64595, 139.65318),
+    "駒沢オリンピック公園": (35.6388, 139.6519),
     "猿江恩賜公園":     (35.69050, 139.81920),
     "汐入公園":         (35.73776, 139.81261),
     "舎人公園":         (35.77500, 139.80473),
@@ -122,6 +124,8 @@ _mg_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "de
 _sb_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _nk_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 _eg_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_cu_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
+_ts_status:  dict = {"running": False, "total": 0, "done": 0, "inserted": 0, "deleted": 0}
 
 # 水遊び公園のソース一覧（/api/parks/water で使用）
 WATER_SOURCES = (
@@ -129,6 +133,7 @@ WATER_SOURCES = (
     'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
     'itabashi', 'adachi', 'katsushika',
     'chiyoda', 'sumida', 'koto', 'shinagawa', 'meguro', 'shibuya', 'nakano', 'edogawa',
+    'chuo', 'toshima',
 )
 
 
@@ -2522,6 +2527,78 @@ def sync_edogawa():
 @app.get("/api/sync/edogawa/status")
 def edogawa_status():
     return _eg_status
+
+
+def fetch_chuo_parks():
+    # テーブル列: 名称(0)|所在地(1)|清掃日(2)|場所(3)
+    _fetch_generic_ward_parks(
+        'chuo', CHUO_URL, _cu_status,
+        ward_prefix="東京都中央区", name_col=0, addr_col=1,
+        extra_skip={"名称", "所在地", "清掃日", "場所", "地図（外部サイトへリンク）"},
+    )
+
+@app.post("/api/sync/chuo")
+def sync_chuo():
+    if _cu_status["running"]:
+        return {"status": "already_running", **_cu_status}
+    threading.Thread(target=fetch_chuo_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/chuo/status")
+def chuo_status():
+    return _cu_status
+
+
+def fetch_toshima_parks():
+    """豊島区公式サイトから水遊び場を取得する。
+    テーブルが複数あり、公園名+住所の行とその続き行（期間/時間のみ）が混在する。
+    """
+    _ts_status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    headers = {"User-Agent": KOENTANBO_UA}
+    try:
+        r = _requests.get(TOSHIMA_URL, timeout=15, headers=headers)
+        r.raise_for_status()
+        text = r.content.decode("utf-8", errors="replace")
+        soup = BeautifulSoup(text, "html.parser")
+
+        parks_data: list[dict] = []
+        seen: set[str] = set()
+        _PARK_KWS = ("公園", "遊園", "緑地", "広場", "児童", "ガーデン", "パーク")
+        _ADDR_PAT = re.compile(r'.+\d')  # 住所は必ず数字を含む
+
+        for table in soup.find_all("table"):
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) < 2:
+                    continue
+                name = cells[0].get_text(strip=True)
+                addr_raw = cells[1].get_text(strip=True)
+                # 公園名キーワード必須、住所パターン必須、重複除外
+                if not any(kw in name for kw in _PARK_KWS):
+                    continue
+                if not _ADDR_PAT.match(addr_raw):
+                    continue
+                if name in seen or _is_junk_name(name):
+                    continue
+                seen.add(name)
+                addr = _build_full_address(addr_raw, "東京都豊島区")
+                parks_data.append({"name": name, "address": addr, "description": None})
+
+        _sync_parks_data('toshima', TOSHIMA_URL, _ts_status, parks_data)
+    except Exception as exc:
+        print(f"[toshima] fetch error: {exc}")
+        _ts_status["running"] = False
+
+@app.post("/api/sync/toshima")
+def sync_toshima():
+    if _ts_status["running"]:
+        return {"status": "already_running", **_ts_status}
+    threading.Thread(target=fetch_toshima_parks, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/sync/toshima/status")
+def toshima_status():
+    return _ts_status
 
 
 @app.post("/api/visit", status_code=201)

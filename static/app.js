@@ -72,6 +72,7 @@ const WATER_PARK_SOURCES = new Set([
   'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
   'itabashi', 'adachi', 'katsushika',
   'chiyoda', 'sumida', 'koto', 'shinagawa', 'meguro', 'shibuya', 'nakano', 'edogawa',
+  'chuo', 'toshima',
 ]);
 
 function markerIcon(parkType, photoCount, createdAt, source) {

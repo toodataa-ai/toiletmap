@@ -240,6 +240,16 @@
         <span>🏙️ 江戸川区（水遊び公園）</span>
         <a class="src-link" href="https://www.city.edogawa.tokyo.jp/e066/kuseijoho/gaiyo/shisetsuguide/bunya/koendobutsuen/jabjab.html" target="_blank" rel="noopener">出典↗</a>
       </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="chuo" checked>
+        <span>🏙️ 中央区（じゃぶじゃぶ）</span>
+        <a class="src-link" href="https://www.city.chuo.lg.jp/a0037/machizukuri/kouenryokka/kouen/zyabuzyabuiker2.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
+      <label class="src-item">
+        <input type="checkbox" class="water-src" value="toshima" checked>
+        <span>🏙️ 豊島区（水遊び公園）</span>
+        <a class="src-link" href="https://www.city.toshima.lg.jp/340/2108261057.html" target="_blank" rel="noopener">出典↗</a>
+      </label>
     </div>
 
     <button id="water-run-btn" class="btn btn-primary">▶ 選択したソースを取得</button>
@@ -379,6 +389,18 @@
         <div class="src-prog-detail" id="wpd-edogawa">—</div>
       </div>
 
+      <div class="src-prog-row" id="wpr-chuo" style="display:none">
+        <div class="src-prog-label">🏙️ 中央区 <span class="badge idle" id="wbg-chuo">待機中</span></div>
+        <div class="progress-wrap" id="wpw-chuo"><div class="progress-fill" id="wpf-chuo"></div></div>
+        <div class="src-prog-detail" id="wpd-chuo">—</div>
+      </div>
+
+      <div class="src-prog-row" id="wpr-toshima" style="display:none">
+        <div class="src-prog-label">🏙️ 豊島区 <span class="badge idle" id="wbg-toshima">待機中</span></div>
+        <div class="progress-wrap" id="wpw-toshima"><div class="progress-fill" id="wpf-toshima"></div></div>
+        <div class="src-prog-detail" id="wpd-toshima">—</div>
+      </div>
+
     </div>
   </div>
 
@@ -514,6 +536,8 @@ const WATER_SOURCES = {
   shibuya:    { label: '渋谷区',   api: '/api/sync/shibuya',    status: '/api/sync/shibuya/status'    },
   nakano:     { label: '中野区',   api: '/api/sync/nakano',     status: '/api/sync/nakano/status'     },
   edogawa:    { label: '江戸川区', api: '/api/sync/edogawa',    status: '/api/sync/edogawa/status'    },
+  chuo:       { label: '中央区',   api: '/api/sync/chuo',       status: '/api/sync/chuo/status'       },
+  toshima:    { label: '豊島区',   api: '/api/sync/toshima',    status: '/api/sync/toshima/status'    },
 };
 
 const waterPollers = {};
