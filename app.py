@@ -2664,8 +2664,11 @@ def _fix_ward_only_addresses():
             pid, name, lat, lon, addr, source = row
             if not addr or _is_ward_only_addr(addr) or _is_bad_addr(addr):
                 return True
-            # 都立公園: TORITSU_COORDSと200m以上ずれていたら座標・住所を修正
             if source == 'toritsu':
+                # 正式住所が辞書にあってDBと一致しない場合は修正対象
+                if name in TORITSU_ADDRS and addr != TORITSU_ADDRS[name]:
+                    return True
+                # TORITSU_COORDSと200m以上ずれていたら座標・住所を修正
                 correct = TORITSU_COORDS.get(name)
                 if correct and (abs(correct[0] - lat) > 0.002 or abs(correct[1] - lon) > 0.002):
                     return True
