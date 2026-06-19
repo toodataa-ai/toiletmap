@@ -2601,6 +2601,57 @@ def toshima_status():
     return _ts_status
 
 
+# ── 住所一括補完 ──────────────────────────────────────────────────────────────
+
+_fix_addr_status: dict = {"running": False, "total": 0, "done": 0, "fixed": 0}
+
+def _fix_ward_only_addresses():
+    """水遊び公園の区名のみ・不正住所をGSI/Nominatim逆ジオコードで補完する。"""
+    _fix_addr_status.update({"running": True, "total": 0, "done": 0, "fixed": 0})
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(_q(
+                "SELECT id, name, lat, lon, address FROM parks"
+                " WHERE source != 'koentanbo' AND lat IS NOT NULL AND lon IS NOT NULL"
+            ))
+            rows = cur.fetchall()
+
+        targets = [
+            r for r in rows
+            if not r[4] or _is_ward_only_addr(r[4]) or _is_bad_addr(r[4])
+        ]
+        _fix_addr_status["total"] = len(targets)
+        print(f"[fix-addr] 対象: {len(targets)} 件")
+
+        for pid, name, lat, lon, addr in targets:
+            new_addr = _reverse_geocode_gsi(lat, lon)
+            if not new_addr or _is_ward_only_addr(new_addr):
+                new_addr = _reverse_geocode_nominatim(lat, lon)
+            if new_addr and not _is_ward_only_addr(new_addr) and not _is_bad_addr(new_addr):
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(_q("UPDATE parks SET address=%s WHERE id=%s"), (new_addr, pid))
+                _fix_addr_status["fixed"] += 1
+                print(f"[fix-addr] {name}: {addr!r} → {new_addr!r}")
+            _fix_addr_status["done"] += 1
+    except Exception as exc:
+        print(f"[fix-addr] error: {exc}")
+    finally:
+        _fix_addr_status["running"] = False
+
+@app.post("/api/fix-addresses")
+def fix_addresses():
+    if _fix_addr_status["running"]:
+        return {"status": "already_running", **_fix_addr_status}
+    threading.Thread(target=_fix_ward_only_addresses, daemon=True).start()
+    return {"status": "started"}
+
+@app.get("/api/fix-addresses/status")
+def fix_addresses_status():
+    return _fix_addr_status
+
+
 @app.post("/api/visit", status_code=201)
 def record_visit():
     with get_db() as conn:

@@ -57,6 +57,9 @@
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-primary { background: #2E7D32; color: #fff; }
     .btn-primary:hover:not(:disabled) { opacity: 0.85; }
+    .btn-sm { padding: 5px 14px; font-size: 12px; background: #f5f5f5; color: #333; border: 1px solid #ccc; }
+    .btn-sm:hover { background: #e0e0e0; }
+    .check-all-wrap { display: flex; gap: 8px; margin-bottom: 10px; }
 
     .hint-text { font-size: 13px; color: #555; margin-bottom: 14px; }
 
@@ -124,6 +127,10 @@
   <div class="card">
     <h2>💧 水遊び公園データ取得</h2>
     <p class="hint-text">取得するソースにチェックを入れて実行してください</p>
+    <div class="check-all-wrap">
+      <button class="btn btn-sm" id="chk-all-btn">全チェック</button>
+      <button class="btn btn-sm" id="chk-none-btn">全解除</button>
+    </div>
 
     <div class="src-list">
       <label class="src-item">
@@ -404,6 +411,17 @@
     </div>
   </div>
 
+  <!-- 住所補完 -->
+  <div class="card">
+    <h2>📍 住所一括補完</h2>
+    <p class="hint-text">区名のみ・不正な住所を持つ水遊び公園を逆ジオコードで補完します（GSI→Nominatim順に試行）。件数によっては数分かかります。</p>
+    <button class="btn btn-primary" id="fix-addr-btn">▶ 住所補完を実行</button>
+    <div id="fix-addr-prog" style="display:none; margin-top:12px">
+      <span class="badge idle" id="fix-addr-badge">待機中</span>
+      <span id="fix-addr-detail" style="margin-left:8px; font-size:0.85em; color:#555">—</span>
+    </div>
+  </div>
+
   <!-- スケジュール情報 -->
   <div class="card">
     <h2>⏰ 自動スケジュール</h2>
@@ -633,6 +651,47 @@ document.getElementById('water-run-btn').addEventListener('click', async () => {
     }
   }
 })();
+
+// ── 全チェック / 全解除 ───────────────────────────────────────
+document.getElementById('chk-all-btn').addEventListener('click', () => {
+  document.querySelectorAll('.water-src').forEach(el => el.checked = true);
+});
+document.getElementById('chk-none-btn').addEventListener('click', () => {
+  document.querySelectorAll('.water-src').forEach(el => el.checked = false);
+});
+
+// ── 住所補完 ──────────────────────────────────────────────────
+let fixAddrPoller = null;
+
+function updateFixAddrUI(s) {
+  const badge = document.getElementById('fix-addr-badge');
+  const detail = document.getElementById('fix-addr-detail');
+  const btn = document.getElementById('fix-addr-btn');
+  if (s.running) {
+    badge.className = 'badge running'; badge.textContent = '実行中';
+    detail.textContent = `${s.done} / ${s.total} 件処理 (補完: ${s.fixed} 件)`;
+    btn.disabled = true;
+  } else {
+    badge.className = 'badge done'; badge.textContent = '完了';
+    detail.textContent = `処理: ${s.total} 件 / 補完: ${s.fixed} 件`;
+    btn.disabled = false;
+    if (fixAddrPoller) { clearInterval(fixAddrPoller); fixAddrPoller = null; }
+  }
+}
+
+document.getElementById('fix-addr-btn').addEventListener('click', async () => {
+  if (!confirm('区名のみの住所を一括補完します。件数によっては数分かかります。よろしいですか？')) return;
+  document.getElementById('fix-addr-prog').style.display = 'block';
+  const r = await fetch('/api/fix-addresses', { method: 'POST' });
+  const s = await r.json();
+  updateFixAddrUI(s);
+  if (s.running || s.status === 'started') {
+    fixAddrPoller = setInterval(async () => {
+      const r2 = await fetch('/api/fix-addresses/status');
+      updateFixAddrUI(await r2.json());
+    }, 2000);
+  }
+});
 </script>
 </body>
 </html>
