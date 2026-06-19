@@ -929,11 +929,11 @@ def _geocode_gsi(address: str) -> tuple | None:
 
 
 def _reverse_geocode_nominatim(lat: float, lon: float) -> str:
-    """Nominatim 逆ジオコーディングで座標から住所文字列を取得。zoom=16 で丁目レベル。"""
+    """Nominatim 逆ジオコーディングで座標から住所文字列を取得。zoom=18 で番地レベル。"""
     try:
         resp = _requests.get(
             "https://nominatim.openstreetmap.org/reverse",
-            params={"lat": lat, "lon": lon, "format": "json", "addressdetails": 1, "zoom": 16},
+            params={"lat": lat, "lon": lon, "format": "json", "addressdetails": 1, "zoom": 18},
             headers={"User-Agent": KOENTANBO_UA},
             timeout=10,
         )
@@ -1735,8 +1735,9 @@ def _build_full_address(addr_raw: str, ward_prefix: str) -> str:
 
 _JUNK_PAT = re.compile(
     r'^\d+月'                       # 日付（6月4日、8月10日等）
-    r'|です|ます|ください'           # 敬語文
+    r'|です|ます|ください|ました|ません|しました'  # 敬語・過去形（ニュース文）
     r'|について|に関する|ですが|ので|ため'  # 説明文・接続助詞
+    r'|新しい|オープン|開設|開催|開放'    # 開設案内文
     r'|ガーデナー|カレンダー|お知らせ|トイレ|整備|落書き'  # ナビリンク
     r'|方針|計画|ガイドライン|規則|条例'              # 政策・計画文書名
     r'|電話|FAX|ファックス|TEL|お問い合わせ|担当課|窓口'   # 連絡先情報
@@ -1747,6 +1748,8 @@ _JUNK_PAT = re.compile(
 
 def _is_junk_name(name: str) -> bool:
     """公園名でない誤取得テキスト（ナビ・注記・日付等）を判定する。"""
+    if len(name) > 30:  # 公園名として長すぎる（案内文・説明文）
+        return True
     return bool(_JUNK_PAT.search(name))
 
 
@@ -2606,34 +2609,55 @@ def toshima_status():
 _fix_addr_status: dict = {"running": False, "total": 0, "done": 0, "fixed": 0}
 
 def _fix_ward_only_addresses():
-    """水遊び公園の区名のみ・不正住所をGSI/Nominatim逆ジオコードで補完する。"""
+    """水遊び公園の区名のみ・不正住所をGSI/Nominatim逆ジオコードで補完する。
+    都立公園はTORITSU_COORDSとDBの座標が乖離している場合も座標・住所を修正する。
+    """
     _fix_addr_status.update({"running": True, "total": 0, "done": 0, "fixed": 0})
     try:
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute(_q(
-                "SELECT id, name, lat, lon, address FROM parks"
+                "SELECT id, name, lat, lon, address, source FROM parks"
                 " WHERE source != 'koentanbo' AND lat IS NOT NULL AND lon IS NOT NULL"
             ))
             rows = cur.fetchall()
 
-        targets = [
-            r for r in rows
-            if not r[4] or _is_ward_only_addr(r[4]) or _is_bad_addr(r[4])
-        ]
+        def _needs_fix(row):
+            pid, name, lat, lon, addr, source = row
+            if not addr or _is_ward_only_addr(addr) or _is_bad_addr(addr):
+                return True
+            # 都立公園: TORITSU_COORDSと200m以上ずれていたら座標・住所を修正
+            if source == 'toritsu':
+                correct = TORITSU_COORDS.get(name)
+                if correct and (abs(correct[0] - lat) > 0.002 or abs(correct[1] - lon) > 0.002):
+                    return True
+            return False
+
+        targets = [r for r in rows if _needs_fix(r)]
         _fix_addr_status["total"] = len(targets)
         print(f"[fix-addr] 対象: {len(targets)} 件")
 
-        for pid, name, lat, lon, addr in targets:
-            new_addr = _reverse_geocode_gsi(lat, lon)
+        for pid, name, lat, lon, addr, source in targets:
+            # 都立公園で座標ズレがある場合はTORITSU_COORDSの座標を使う
+            correct = TORITSU_COORDS.get(name) if source == 'toritsu' else None
+            use_lat = correct[0] if correct else lat
+            use_lon = correct[1] if correct else lon
+
+            new_addr = _reverse_geocode_gsi(use_lat, use_lon)
             if not new_addr or _is_ward_only_addr(new_addr):
-                new_addr = _reverse_geocode_nominatim(lat, lon)
+                new_addr = _reverse_geocode_nominatim(use_lat, use_lon)
             if new_addr and not _is_ward_only_addr(new_addr) and not _is_bad_addr(new_addr):
                 with get_db() as conn:
                     cur = conn.cursor()
-                    cur.execute(_q("UPDATE parks SET address=%s WHERE id=%s"), (new_addr, pid))
+                    if correct:
+                        cur.execute(
+                            _q("UPDATE parks SET lat=%s, lon=%s, address=%s WHERE id=%s"),
+                            (use_lat, use_lon, new_addr, pid),
+                        )
+                    else:
+                        cur.execute(_q("UPDATE parks SET address=%s WHERE id=%s"), (new_addr, pid))
                 _fix_addr_status["fixed"] += 1
-                print(f"[fix-addr] {name}: {addr!r} → {new_addr!r}")
+                print(f"[fix-addr] {name}: ({lat:.5f},{lon:.5f}) {addr!r} → ({use_lat:.5f},{use_lon:.5f}) {new_addr!r}")
             _fix_addr_status["done"] += 1
     except Exception as exc:
         print(f"[fix-addr] error: {exc}")
