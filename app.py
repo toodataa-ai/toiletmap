@@ -1516,7 +1516,12 @@ def fetch_toritsu_parks(force: bool = False):
             hardcoded = TORITSU_COORDS.get(name)
             if hardcoded:
                 lat, lon = hardcoded
-                geocoded_addr_tt = ""
+                # ハードコード座標から逆ジオコードで住所を取得
+                geocoded_addr_tt = _reverse_geocode_gsi(lat, lon) or ""
+                if not geocoded_addr_tt or _is_ward_only_addr(geocoded_addr_tt):
+                    rev_nom = _reverse_geocode_nominatim(lat, lon)
+                    if rev_nom and len(rev_nom) > len(geocoded_addr_tt):
+                        geocoded_addr_tt = rev_nom
             else:
                 result = _geocode_park(name, geocode_addr)
                 if not result:
@@ -1525,16 +1530,19 @@ def fetch_toritsu_parks(force: bool = False):
                     continue
                 lat, lon, geocoded_addr_tt = result
             full_addr = _best_addr(geocode_addr, geocoded_addr_tt)
+            # 既存住所が具体的なら保持（force=True時は full_addr で更新）
+            if existing_addr and not _is_ward_only_addr(existing_addr) and not _is_bad_addr(existing_addr) and not force:
+                full_addr = existing_addr
 
             try:
                 with get_db() as conn:
                     cur = conn.cursor()
                     if existing_id:
                         cur.execute(
-                            _q("UPDATE parks SET lat=%s, lon=%s, source='toritsu', source_url=%s, osm_id=%s, address=COALESCE(NULLIF(address,''),%s) WHERE id=%s"),
+                            _q("UPDATE parks SET lat=%s, lon=%s, source='toritsu', source_url=%s, osm_id=%s, address=%s WHERE id=%s"),
                             (lat, lon, source_url, osm_id, full_addr, existing_id),
                         )
-                        print(f"[toritsu] 座標更新: {name} ({lat:.5f},{lon:.5f})")
+                        print(f"[toritsu] 座標更新: {name} ({lat:.5f},{lon:.5f}) addr={full_addr}")
                     else:
                         cur.execute(
                             _q(f"""INSERT INTO parks
@@ -1572,6 +1580,21 @@ def toritsu_status():
     return _tt_status
 
 
+def _fetch_minato_park_addr(detail_url: str) -> str:
+    """港区公園詳細ページから所在地テキストを取得する。"""
+    if not detail_url:
+        return ""
+    try:
+        r = _requests.get(detail_url, timeout=10, headers={"User-Agent": KOENTANBO_UA})
+        text = r.content.decode("utf-8", errors="replace")
+        m = re.search(r'所在地</h2>\s*<p>\s*(港区[^<\s]{3,40})', text)
+        if m:
+            return "東京都" + m.group(1).strip()
+    except Exception as exc:
+        print(f"[minato/addr] {detail_url}: {exc}")
+    return ""
+
+
 def fetch_minato_parks():
     """港区公式サイトから水遊び場（じゃぶじゃぶ池など）を取得する。"""
     global _mn_status
@@ -1580,8 +1603,8 @@ def fetch_minato_parks():
     try:
         r = _requests.get(MINATO_URL, timeout=15, headers=headers)
         r.raise_for_status()
-        r.encoding = "utf-8"
-        soup = BeautifulSoup(r.text, "html.parser")
+        text = r.content.decode("utf-8", errors="replace")
+        soup = BeautifulSoup(text, "html.parser")
 
         parks_data = []
         seen = set()
@@ -1600,7 +1623,9 @@ def fetch_minato_parks():
                 href = a["href"] if a else ""
                 park_url = (MINATO_BASE + href) if href.startswith("/") else href
                 desc = cells[5].get_text(strip=True) if len(cells) > 5 else ""
-                parks_data.append({"name": name, "source_url": park_url, "description": desc})
+                # 詳細ページから住所を取得
+                addr = _fetch_minato_park_addr(park_url) if park_url else ""
+                parks_data.append({"name": name, "source_url": park_url, "description": desc, "address": addr})
 
         current_osm_ids = {f"minato_{re.sub(r'[\s/\\]', '_', p['name'])}" for p in parks_data}
         _mn_status["total"] = len(parks_data)
@@ -1611,6 +1636,8 @@ def fetch_minato_parks():
             name       = park["name"]
             source_url = park["source_url"]
             desc       = park["description"] or None
+            page_addr  = park.get("address") or ""   # 詳細ページから取得した住所
+            geocode_hint = page_addr or "東京都港区"  # ジオコード用のヒント
             osm_id     = f"minato_{re.sub(r'[\s/\\]', '_', name)}"
 
             with get_db() as conn:
@@ -1627,10 +1654,10 @@ def fetch_minato_parks():
                     or not existing_addr.startswith("東京都")
                 )
                 if needs_regeocode:
-                    result = _geocode_park(name, "東京都港区")
+                    result = _geocode_park(name, geocode_hint)
                     if result:
                         lat_r, lon_r, geocoded_addr = result
-                        better = _best_addr("東京都港区", geocoded_addr)
+                        better = _best_addr(page_addr or "東京都港区", geocoded_addr)
                         if better != existing_addr:
                             with get_db() as conn:
                                 cur = conn.cursor()
@@ -1642,13 +1669,13 @@ def fetch_minato_parks():
                 _mn_status["done"] += 1
                 continue
 
-            result = _geocode_park(name, "東京都港区")
+            result = _geocode_park(name, geocode_hint)
             if not result:
                 print(f"[minato] geocode 失敗: {name}")
                 _mn_status["done"] += 1
                 continue
             lat, lon, geocoded_addr = result
-            better = _best_addr("東京都港区", geocoded_addr)
+            better = _best_addr(page_addr or "東京都港区", geocoded_addr)
 
             try:
                 with get_db() as conn:

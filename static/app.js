@@ -71,6 +71,7 @@ const WATER_PARK_SOURCES = new Set([
   'shinjuku', 'suginami', 'nerima', 'toritsu', 'minato',
   'ota', 'setagaya', 'taito', 'bunkyo', 'kita', 'arakawa',
   'itabashi', 'adachi', 'katsushika',
+  'chiyoda', 'sumida', 'koto', 'shinagawa', 'meguro', 'shibuya', 'nakano', 'edogawa',
 ]);
 
 function markerIcon(parkType, photoCount, createdAt, source) {
