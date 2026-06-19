@@ -70,7 +70,7 @@ TOSHIMA_URL  = "https://www.city.toshima.lg.jp/340/2108261057.html"
 # 新規公園がサイトに追加された場合はここにない→自動ジオコードへフォールバック
 TORITSU_COORDS: dict[str, tuple[float, float]] = {
     "赤塚公園":         (35.78477, 139.65644),
-    "秋留台公園":       (35.72889, 139.29417),
+    "秋留台公園":       (35.7305,  139.2998),
     "浮間公園":         (35.79486, 139.69286),
     "大泉中央公園":     (35.77554, 139.59701),
     "尾久の原公園":     (35.75150, 139.77690),
@@ -92,6 +92,35 @@ TORITSU_COORDS: dict[str, tuple[float, float]] = {
     "林試の森公園":     (35.64148, 139.69820),
     "井の頭自然文化園": (35.71778, 139.56612),
 }
+
+# 都立公園の正式住所（逆ジオコードでは取得できない公園ごとの住所）
+TORITSU_ADDRS: dict[str, str] = {
+    "駒沢オリンピック公園": "東京都世田谷区駒沢公園1-1",
+}
+
+# 国土地理院 muniCd → 自治体名（lv01Nmに自治体名が含まれない場合に使用）
+_GSI_MUNI_MAP: dict[str, str] = {
+    "13101": "千代田区", "13102": "中央区",   "13103": "港区",
+    "13104": "新宿区",   "13105": "文京区",   "13106": "台東区",
+    "13107": "墨田区",   "13108": "江東区",   "13109": "品川区",
+    "13110": "目黒区",   "13111": "大田区",   "13112": "世田谷区",
+    "13113": "渋谷区",   "13114": "中野区",   "13115": "杉並区",
+    "13116": "豊島区",   "13117": "北区",     "13118": "荒川区",
+    "13119": "板橋区",   "13120": "練馬区",   "13121": "足立区",
+    "13122": "葛飾区",   "13123": "江戸川区",
+    "13201": "八王子市", "13202": "立川市",   "13203": "武蔵野市",
+    "13204": "三鷹市",   "13205": "青梅市",   "13206": "府中市",
+    "13207": "昭島市",   "13208": "調布市",   "13209": "町田市",
+    "13210": "小金井市", "13211": "小平市",   "13212": "日野市",
+    "13213": "東村山市", "13214": "国分寺市", "13215": "国立市",
+    "13218": "福生市",   "13219": "狛江市",   "13220": "東大和市",
+    "13221": "清瀬市",   "13222": "東久留米市","13223": "武蔵村山市",
+    "13224": "多摩市",   "13225": "稲城市",   "13227": "羽村市",
+    "13228": "あきる野市","13229": "西東京市",
+    "13303": "瑞穂町",   "13305": "日の出町", "13307": "檜原村",
+    "13308": "奥多摩町",
+}
+
 KOENTANBO_SITEMAPS = [
     f"{KOENTANBO_BASE}/post-sitemap.xml",
     f"{KOENTANBO_BASE}/post-sitemap2.xml",
@@ -872,7 +901,13 @@ def _reverse_geocode_gsi(lat: float, lon: float) -> str:
         lv01 = results.get("lv01Nm", "")
         if lv01:
             muni_cd = results.get("muniCd", "")
-            return ("東京都" + lv01) if muni_cd.startswith("13") else lv01
+            if muni_cd.startswith("13"):
+                muni_name = _GSI_MUNI_MAP.get(muni_cd, "")
+                # lv01Nmに自治体名が含まれていない場合は先頭に付加する
+                if muni_name and not lv01.startswith(muni_name):
+                    return "東京都" + muni_name + lv01
+                return "東京都" + lv01
+            return lv01
     except Exception as exc:
         print(f"[geocode/gsi-reverse] error ({lat},{lon}): {exc}")
     finally:
@@ -1521,12 +1556,15 @@ def fetch_toritsu_parks(force: bool = False):
             hardcoded = TORITSU_COORDS.get(name)
             if hardcoded:
                 lat, lon = hardcoded
-                # ハードコード座標から逆ジオコードで住所を取得
-                geocoded_addr_tt = _reverse_geocode_gsi(lat, lon) or ""
-                if not geocoded_addr_tt or _is_ward_only_addr(geocoded_addr_tt):
-                    rev_nom = _reverse_geocode_nominatim(lat, lon)
-                    if rev_nom and len(rev_nom) > len(geocoded_addr_tt):
-                        geocoded_addr_tt = rev_nom
+                # 正式住所が辞書にあればそれを使う（逆ジオコード不要）
+                if name in TORITSU_ADDRS:
+                    geocoded_addr_tt = TORITSU_ADDRS[name]
+                else:
+                    geocoded_addr_tt = _reverse_geocode_gsi(lat, lon) or ""
+                    if not geocoded_addr_tt or _is_ward_only_addr(geocoded_addr_tt):
+                        rev_nom = _reverse_geocode_nominatim(lat, lon)
+                        if rev_nom and len(rev_nom) > len(geocoded_addr_tt):
+                            geocoded_addr_tt = rev_nom
             else:
                 result = _geocode_park(name, geocode_addr)
                 if not result:
@@ -2643,9 +2681,13 @@ def _fix_ward_only_addresses():
             use_lat = correct[0] if correct else lat
             use_lon = correct[1] if correct else lon
 
-            new_addr = _reverse_geocode_gsi(use_lat, use_lon)
-            if not new_addr or _is_ward_only_addr(new_addr):
-                new_addr = _reverse_geocode_nominatim(use_lat, use_lon)
+            # 正式住所が辞書にあればそれを使う（逆ジオコード不要）
+            if source == 'toritsu' and name in TORITSU_ADDRS:
+                new_addr = TORITSU_ADDRS[name]
+            else:
+                new_addr = _reverse_geocode_gsi(use_lat, use_lon)
+                if not new_addr or _is_ward_only_addr(new_addr):
+                    new_addr = _reverse_geocode_nominatim(use_lat, use_lon)
             if new_addr and not _is_ward_only_addr(new_addr) and not _is_bad_addr(new_addr):
                 with get_db() as conn:
                     cur = conn.cursor()
