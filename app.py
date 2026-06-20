@@ -51,6 +51,7 @@ SETAGAYA_URL   = "https://www.city.setagaya.lg.jp/02075/9197.html"
 TAITO_URL      = "https://www.city.taito.lg.jp/kenchiku/hanamidori/koen/shokai/mizuasobi.html"
 BUNKYO_URL     = "https://www.city.bunkyo.lg.jp/b036/p004823.html"
 KITA_URL       = "https://www.city.kita.lg.jp/parks/list/1009530.html"
+KITA_PDF_URL   = "https://www.city.kita.lg.jp/_res/projects/default_project/_page_/001/009/530/2025-2027mizuasobi_kouen2.pdf"
 ARAKAWA_URL    = "https://www.city.arakawa.tokyo.jp/a043/koen/koen/mizuasobikouen.html"
 ITABASHI_URL   = "https://www.city.itabashi.tokyo.jp/bousai/kouen/kouen/1006629.html"
 ADACHI_URL     = "https://www.city.adachi.tokyo.jp/k-iji/2025jabu-jabu-ike.html"
@@ -2171,31 +2172,25 @@ def bunkyo_status():
 # ── 北区 ─────────────────────────────────────────────────────────────────────
 
 def fetch_kita_parks():
-    """北区 - 公園名が p 要素内に '、' 区切りで記載されているため専用パーサー。"""
+    """北区 - 公式ホームページ掲載PDFから水遊びできる公園一覧を取得。"""
+    import pdfplumber
+    import io as _io
     source, status = 'kita', _kt_status
     status.update({"running": True, "total": 0, "done": 0, "inserted": 0, "deleted": 0})
+    _PARK_RE = re.compile(r'[぀-ゟ゠-ヿ一-鿿々ヶ\w]+(?:公園|遊園|緑地|広場|児童遊園)')
     try:
-        r = _requests.get(KITA_URL, timeout=15, headers={"User-Agent": KOENTANBO_UA})
+        r = _requests.get(KITA_PDF_URL, timeout=30, headers={"User-Agent": KOENTANBO_UA})
         r.raise_for_status()
-        r.encoding = r.apparent_encoding
-        soup = BeautifulSoup(r.text, "html.parser")
         parks_data: list[dict] = []
         seen: set[str] = set()
-        main = soup.find(["main", "article"]) or soup
-        for elem in main.find_all(["p", "dd", "li"]):
-            text = elem.get_text(strip=True)
-            if "、" not in text:
-                continue
-            for name in text.split("、"):
-                name = re.sub(r"\s+", "", name)
-                name = re.sub(r'^[・●▶□◆\s]+', '', name)   # 先頭の箇条書き記号を除去
-                name = re.sub(r'[はをがのにへもで]+$', '', name)  # 末尾の助詞を除去
-                # 公園名として終わる語（公園/遊園/池/広場等）に限定
-                if not any(name.endswith(kw) for kw in ("公園", "遊園", "池", "広場", "緑地")):
-                    continue
-                if 2 < len(name) <= 25 and name not in seen and not _is_junk_name(name):
-                    seen.add(name)
-                    parks_data.append({"name": name, "address": "東京都北区", "description": None})
+        with pdfplumber.open(_io.BytesIO(r.content)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text() or ""
+                for name in _PARK_RE.findall(text):
+                    name = re.sub(r'\s+', '', name)
+                    if 2 < len(name) <= 25 and name not in seen and not _is_junk_name(name):
+                        seen.add(name)
+                        parks_data.append({"name": name, "address": "東京都北区", "description": None})
         _sync_parks_data(source, KITA_URL, status, parks_data)
     except Exception as exc:
         print(f"[{source}] fetch error: {exc}")
